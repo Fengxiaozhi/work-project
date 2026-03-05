@@ -61,8 +61,11 @@ export default {
         }
       ],
       customColumns: [
-        { label: '说明', prop: 'description', flex: 2 },
-        { label: '应急操作配置', prop: 'config', flex: 2 }
+        { label: '序号', type: 'index', width: '90px' },
+        { label: '阶段/步骤名', type: 'name', flex: 2 },
+        { label: '说明', prop: 'description', flex: 1 },
+        { label: '配置', prop: 'config', flex: 1 },
+        { label: '备注', prop: 'remark', flex: 1 }
       ],
       customToolbar: [
         { label: '复制', command: 'copy', disabled: (selection) => !selection.length },

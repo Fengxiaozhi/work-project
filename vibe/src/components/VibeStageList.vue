@@ -38,9 +38,12 @@
       <div class="col-check">
         <el-checkbox :indeterminate="isIndeterminate" v-model="checkAll" @change="handleCheckAll"></el-checkbox>
       </div>
-      <div class="col-index">序号</div>
-      <div class="col-name">阶段/步骤名</div>
-      <div v-for="col in columns" :key="col.prop" :class="`col-dynamic`" :style="{ flex: col.flex || 1 }">
+      <div 
+        v-for="col in columns" 
+        :key="col.label"
+        :class="['col-item', col.type ? `col-${col.type}` : 'col-dynamic']"
+        :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
+      >
         {{ col.label }}
       </div>
       <div class="col-ops">操作</div>
@@ -58,21 +61,32 @@
         <div class="vibe-row vibe-stage-row">
           <div class="col-check">
             <el-checkbox v-model="stage.checked" @change="handleItemCheck"></el-checkbox>
-          </div>
-          <div class="col-index">
             <i class="el-icon-rank drag-handle-stage"></i>
+            <!-- 展开箭头挪到这里 -->
             <i 
               :class="stage.expanded ? 'el-icon-caret-bottom' : 'el-icon-caret-right'"
               class="expand-icon"
               @click="stage.expanded = !stage.expanded"
             ></i>
-            {{ sIdx + 1 }}
           </div>
-          <div class="col-name">{{ stage.name }}</div>
-          <!-- 动态列 -->
-          <div v-for="col in columns" :key="col.prop" class="col-dynamic" :style="{ flex: col.flex || 1 }">
-            {{ stage[col.prop] || '-' }}
+          
+          <div 
+            v-for="col in columns" 
+            :key="col.label"
+            :class="['col-item', col.type ? `col-${col.type}` : 'col-dynamic']"
+            :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
+          >
+            <template v-if="col.type === 'index'">
+              {{ sIdx + 1 }}
+            </template>
+            <template v-else-if="col.type === 'name'">
+              {{ stage.name }}
+            </template>
+            <template v-else>
+              {{ stage[col.prop] || '-' }}
+            </template>
           </div>
+
           <div class="col-ops">
             <el-button 
               v-for="action in rowActions"
@@ -100,16 +114,29 @@
             <div v-for="(step, stIdx) in stage.steps" :key="step.id" class="vibe-row vibe-step-row">
               <div class="col-check">
                 <el-checkbox v-model="step.checked" @change="handleItemCheck"></el-checkbox>
-              </div>
-              <div class="col-index">
                 <i class="el-icon-rank drag-handle-step"></i>
-                <span style="margin-left: 20px">{{ sIdx + 1 }}-{{ stIdx + 1 }}</span>
+                <!-- 占位符，保持对齐 -->
+                <span class="expand-placeholder"></span>
               </div>
-              <div class="col-name">{{ step.name }}</div>
-              <!-- 动态列 -->
-              <div v-for="col in columns" :key="col.prop" class="col-dynamic" :style="{ flex: col.flex || 1 }">
-                {{ step[col.prop] || '-' }}
+
+              <div 
+                v-for="col in columns" 
+                :key="col.label"
+                :class="['col-item', col.type ? `col-${col.type}` : 'col-dynamic']"
+                :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
+              >
+                <template v-if="col.type === 'index'">
+                  <span style="font-size: 12px; color: #909399;">{{ sIdx + 1 }}-{{ stIdx + 1 }}</span>
+                </template>
+                <template v-else-if="col.type === 'name'">
+                  <span class="vibe-step-name-indent"></span>
+                  {{ step.name }}
+                </template>
+                <template v-else>
+                  {{ step[col.prop] || '-' }}
+                </template>
               </div>
+
               <div class="col-ops">
                 <el-button 
                   v-for="action in rowActions"
@@ -158,6 +185,8 @@ export default {
     columns: {
       type: Array,
       default: () => [
+        { label: '序号', type: 'index', width: '90px' },
+        { label: '阶段/步骤名', type: 'name', flex: 2 },
         { label: '说明', prop: 'description', flex: 2 },
         { label: '应急操作配置', prop: 'config', flex: 2 }
       ]
@@ -315,8 +344,6 @@ export default {
     &:hover {
       background-color: #f5f7fa;
     }
-    
-    div { padding: 0 5px; }
   }
 
   .vibe-stage-row {
@@ -326,7 +353,6 @@ export default {
 
   .vibe-step-row {
     background-color: #fff;
-    padding-left: 45px; // 缩进
     border-top: 1px dashed #f0f0f0;
   }
 
@@ -334,18 +360,50 @@ export default {
     background-color: #fff;
   }
 
+  .col-item {
+    padding: 0 5px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   // 列宽度分配
-  .col-check { width: 40px; }
-  .col-index { width: 80px; display: flex; align-items: center; }
+  .col-check { 
+    width: 55px; 
+    padding: 0 5px; 
+    flex-shrink: 0; 
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+
+    /deep/ .el-checkbox {
+      margin-right: 2px;
+    }
+  }
+
+  .expand-placeholder {
+    width: 14px; 
+    display: inline-block;
+  }
+  
+  .col-index { overflow: visible; flex-shrink: 0; }
   .col-name { flex: 2; }
-  .col-desc { flex: 2; color: #909399; }
-  .col-config { flex: 2; color: #909399; }
-  .col-ops { width: 150px; text-align: right; }
+  
+  .vibe-step-name-indent {
+    width: 25px; // 给步骤名加个小缩进，增强层次感
+    flex-shrink: 0;
+  }
+
+  .col-dynamic { flex: 1; color: #909399; }
+  .col-ops { width: 150px; text-align: right; flex-shrink: 0; padding: 0 5px; }
 
   .drag-handle-stage, .drag-handle-step {
     cursor: move;
     color: #c0c4cc;
-    margin-right: 8px;
+    margin-right: 4px;
     font-size: 16px;
   }
 
