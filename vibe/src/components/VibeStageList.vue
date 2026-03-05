@@ -55,6 +55,7 @@
       handle=".drag-handle-stage"
       animation="200"
       ghost-class="vibe-ghost"
+      @change="onStageChange"
     >
       <div v-for="(stage, sIdx) in internalList" :key="stage.id" class="vibe-stage-group">
         <!-- 阶段行 -->
@@ -110,6 +111,7 @@
             handle=".drag-handle-step"
             animation="200"
             ghost-class="vibe-ghost"
+            @change="(evt) => onStepChange(evt, stage)"
           >
             <div v-for="(step, stIdx) in stage.steps" :key="step.id" class="vibe-row vibe-step-row">
               <div class="col-check">
@@ -216,7 +218,8 @@ export default {
       searchQuery: '',
       checkAll: false,
       isIndeterminate: false,
-      selection: []
+      selection: [],
+      lastDelta: null // 记录最后一次变更，用于高性能回滚
     };
   },
   watch: {
@@ -298,6 +301,93 @@ export default {
       if (!stage.steps) this.$set(stage, 'steps', []);
       stage.steps.push(newStep);
       stage.expanded = true;
+    },
+    // 阶段顺序变更
+    onStageChange(evt) {
+      if (evt.moved) {
+        this.lastDelta = {
+          type: 'stage',
+          item: evt.moved.element,
+          oldIndex: evt.moved.oldIndex,
+          newIndex: evt.moved.newIndex
+        };
+        this.$emit('drag-save', this.lastDelta);
+      }
+    },
+    // 步骤顺序或容器变更
+    onStepChange(evt, stage) {
+      if (evt.moved) {
+        this.lastDelta = {
+          type: 'step',
+          action: 'moved',
+          item: evt.moved.element,
+          oldIndex: evt.moved.oldIndex,
+          newIndex: evt.moved.newIndex,
+          stageId: stage.id
+        };
+      } else if (evt.added) {
+        // 如果已经有 removed 信息，合并它
+        const base = (this.lastDelta && this.lastDelta.type === 'step') ? this.lastDelta : {};
+        this.lastDelta = {
+          ...base,
+          type: 'step',
+          action: base.oldStageId ? 'cross-moved' : 'added',
+          item: evt.added.element,
+          newIndex: evt.added.newIndex,
+          newStageId: stage.id
+        };
+      } else if (evt.removed) {
+        // 如果已经有 added 信息，合并它
+        const base = (this.lastDelta && this.lastDelta.type === 'step') ? this.lastDelta : {};
+        this.lastDelta = {
+          ...base,
+          type: 'step',
+          action: base.newStageId ? 'cross-moved' : 'removed',
+          oldIndex: evt.removed.oldIndex,
+          oldStageId: stage.id,
+          item: base.item || evt.removed.element
+        };
+      }
+      
+      // 只有在确定是完整动作后（或者简单的 move）才派发
+      const isComplete = evt.moved || (this.lastDelta && this.lastDelta.oldStageId && this.lastDelta.newStageId);
+      if (isComplete) {
+        this.$emit('drag-save', this.lastDelta);
+      }
+    },
+    // 高性能回滚：基于增量（Delta）恢复，不进行全量覆盖
+    rollback() {
+      if (!this.lastDelta) return;
+
+      const { type, action, oldIndex, newIndex, stageId, oldStageId, newStageId } = this.lastDelta;
+
+      // 1. 阶段移动回滚
+      if (type === 'stage') {
+        const item = this.internalList.splice(newIndex, 1)[0];
+        this.internalList.splice(oldIndex, 0, item);
+      } 
+      // 2. 步骤移动回滚
+      else if (type === 'step') {
+        // 同阶段内移动回滚
+        if (action === 'moved') {
+          const stage = this.internalList.find(s => s.id === stageId);
+          if (stage && stage.steps) {
+            const item = stage.steps.splice(newIndex, 1)[0];
+            stage.steps.splice(oldIndex, 0, item);
+          }
+        } 
+        // 跨阶段移动回滚
+        else {
+          const oldStage = this.internalList.find(s => s.id === oldStageId);
+          const newStage = this.internalList.find(s => s.id === newStageId);
+          if (oldStage && newStage) {
+            const item = newStage.steps.splice(newIndex, 1)[0];
+            oldStage.steps.splice(oldIndex, 0, item);
+          }
+        }
+      }
+
+      this.lastDelta = null; // 处理完后清空
     }
   }
 };

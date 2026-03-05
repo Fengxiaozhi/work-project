@@ -12,6 +12,7 @@
       <section style="margin-top: 20px;">
         <h2>Stage List 阶段步骤列表 (配置项自定义演示)</h2>
         <vibe-stage-list 
+          ref="vibeList"
           :list="mockData" 
           :columns="customColumns"
           :toolbar-actions="customToolbar"
@@ -19,6 +20,7 @@
           @toolbar-action="handleToolbarAction"
           @row-action="handleRowAction"
           @selection-change="handleSelectionChange"
+          @drag-save="handleDragSave"
         ></vibe-stage-list>
       </section>
 
@@ -91,6 +93,43 @@ export default {
     },
     handleRowAction(command, row) {
       this.$message.info(`Row Action: ${command} on ${row.name}`);
+    },
+    // 将变更保存到后端
+    async handleDragSave(change) {
+      const { type, item, action } = change;
+      const desc = type === 'stage' ? `阶段 [${item.name}]` : `步骤 [${item.name}]`;
+      
+      const loading = this.$loading({
+        lock: true,
+        text: `正在同步${desc}的位置...`,
+        spinner: 'el-icon-loading',
+        background: 'rgba(0, 0, 0, 0.7)'
+      });
+
+      try {
+        // 模拟 API 请求
+        await this.simulateApiSave(change);
+        this.$message.success(`${desc}位置已实时同步到后端`);
+      } catch (error) {
+        this.$message.error(`${desc}同步失败，正在回滚位置...`);
+        // 调用组件暴露的 rollback 方法
+        this.$refs.vibeList.rollback();
+      } finally {
+        loading.close();
+      }
+    },
+    // 模拟接口请求
+    simulateApiSave(change) {
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          // 模拟 30% 失败率
+          if (Math.random() > 0.7) {
+            reject(new Error('Network Error'));
+          } else {
+            resolve();
+          }
+        }, 1000);
+      });
     }
   }
 };
