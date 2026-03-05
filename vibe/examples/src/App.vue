@@ -40,19 +40,20 @@ export default {
     return {
       mockData: [
         {
-          id: 1,
+          no: '01',
           name: '应急处置',
           description: '-',
           config: '-',
           expanded: true,
           checked: false,
           steps: [
-            { id: 101, name: '核实信息', description: '核实报警人身份', config: '电话确认', checked: false },
-            { id: 102, name: '现场封锁', description: '疏散人群', config: '警力调配', checked: false }
+            { id: 101, no: '1-1', name: '核实信息', description: '核实报警人身份', config: '电话确认', checked: false },
+            { id: 102, no: '1-2', name: '现场封锁', description: '疏散人群', config: '警力调配', checked: false }
           ]
         },
         {
           id: 2,
+          no: '02',
           name: '善后处理',
           description: '处理事故现场',
           config: '-',
@@ -63,8 +64,8 @@ export default {
         }
       ],
       customColumns: [
-        { label: '序号', type: 'index', width: '90px' },
-        { label: '阶段/步骤名', type: 'name', flex: 2 },
+        { label: '序号', type: 'index', prop: 'no', width: '90px' },
+        { label: '阶段/步骤名', prop: 'name', flex: 2 },
         { label: '说明', prop: 'description', flex: 1 },
         { label: '配置', prop: 'config', flex: 1 },
         { label: '备注', prop: 'remark', flex: 1 }

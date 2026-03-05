@@ -57,7 +57,12 @@
       ghost-class="vibe-ghost"
       @change="onStageChange"
     >
-      <div v-for="(stage, sIdx) in internalList" :key="stage.id" class="vibe-stage-group">
+      <div 
+        v-for="stage in internalList" 
+        :key="stage.id" 
+        class="vibe-stage-group"
+        v-show="isStageVisible(stage)"
+      >
         <!-- 阶段行 -->
         <div class="vibe-row vibe-stage-row">
           <div class="col-check">
@@ -78,10 +83,7 @@
             :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
           >
             <template v-if="col.type === 'index'">
-              {{ sIdx + 1 }}
-            </template>
-            <template v-else-if="col.type === 'name'">
-              {{ stage.name }}
+              {{ stage[col.prop] }}
             </template>
             <template v-else>
               {{ stage[col.prop] || '-' }}
@@ -113,7 +115,12 @@
             ghost-class="vibe-ghost"
             @change="(evt) => onStepChange(evt, stage)"
           >
-            <div v-for="(step, stIdx) in stage.steps" :key="step.id" class="vibe-row vibe-step-row">
+            <div 
+              v-for="step in stage.steps" 
+              :key="step.id" 
+              class="vibe-row vibe-step-row"
+              v-show="isStepVisible(step)"
+            >
               <div class="col-check">
                 <el-checkbox v-model="step.checked" @change="handleItemCheck"></el-checkbox>
                 <i class="el-icon-rank drag-handle-step"></i>
@@ -128,11 +135,7 @@
                 :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
               >
                 <template v-if="col.type === 'index'">
-                  <span style="font-size: 12px; color: #909399;">{{ sIdx + 1 }}-{{ stIdx + 1 }}</span>
-                </template>
-                <template v-else-if="col.type === 'name'">
-                  <span class="vibe-step-name-indent"></span>
-                  {{ step.name }}
+                  <span style="font-size: 12px; color: #909399;">{{ step[col.prop] }}</span>
                 </template>
                 <template v-else>
                   {{ step[col.prop] || '-' }}
@@ -187,8 +190,8 @@ export default {
     columns: {
       type: Array,
       default: () => [
-        { label: '序号', type: 'index', width: '90px' },
-        { label: '阶段/步骤名', type: 'name', flex: 2 },
+        { label: '序号', type: 'index', prop: 'no', width: '90px' },
+        { label: '阶段/步骤名', prop: 'name', flex: 2 },
         { label: '说明', prop: 'description', flex: 2 },
         { label: '应急操作配置', prop: 'config', flex: 2 }
       ]
@@ -355,6 +358,18 @@ export default {
         this.$emit('drag-save', this.lastDelta);
       }
     },
+    // 搜索辅助逻辑
+    isStageVisible(stage) {
+      if (!this.searchQuery) return true;
+      const q = this.searchQuery.toLowerCase();
+      const matchStage = stage.name && stage.name.toLowerCase().includes(q);
+      const matchSteps = stage.steps && stage.steps.some(step => step.name && step.name.toLowerCase().includes(q));
+      return matchStage || matchSteps;
+    },
+    isStepVisible(step) {
+      if (!this.searchQuery) return true;
+      return step.name && step.name.toLowerCase().includes(this.searchQuery.toLowerCase());
+    },
     // 高性能回滚：基于增量（Delta）恢复，不进行全量覆盖
     rollback() {
       if (!this.lastDelta) return;
@@ -482,10 +497,7 @@ export default {
   .col-index { overflow: visible; flex-shrink: 0; }
   .col-name { flex: 2; }
   
-  .vibe-step-name-indent {
-    width: 25px; // 给步骤名加个小缩进，增强层次感
-    flex-shrink: 0;
-  }
+
 
   .col-dynamic { flex: 1; color: #909399; }
   .col-ops { width: 150px; text-align: right; flex-shrink: 0; padding: 0 5px; }
@@ -506,7 +518,7 @@ export default {
   }
 
   .vibe-add-step {
-    padding: 10px 0 10px 105px;
+    padding: 10px 0 10px 75px;
   }
 
   .vibe-add-stage {
