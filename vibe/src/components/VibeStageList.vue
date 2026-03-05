@@ -117,7 +117,7 @@
         <!-- 步骤子列表 - 只有展开时显示 -->
         <div v-show="stage.expanded" class="vibe-step-container">
           <draggable
-            v-model="stage.steps"
+            v-model="stage.children"
             :group="{ name: 'steps' }"
             handle=".drag-handle-step"
             animation="200"
@@ -125,7 +125,7 @@
             @change="(evt) => onStepChange(evt, stage)"
           >
             <div 
-              v-for="step in stage.steps" 
+              v-for="step in stage.children" 
               :key="step.id" 
               class="vibe-row vibe-step-row"
               v-show="isStepVisible(step)"
@@ -261,7 +261,7 @@
             <!-- 步骤列表 (仅当选择的是步骤时显示) -->
             <div v-show="stage.expanded && selectionType === 'step'" class="vibe-dialog-step-container">
               <div 
-                v-for="step in stage.steps" 
+                v-for="step in stage.children" 
                 :key="step.id" 
                 class="vibe-dialog-row vibe-dialog-step-row"
                 :class="{ 
@@ -386,7 +386,7 @@ export default {
       const q = this.dialogSearchQuery.toLowerCase();
       return this.dialogList.filter(stage => {
         const matchStage = stage.name && stage.name.toLowerCase().includes(q);
-        const matchSteps = stage.steps && stage.steps.some(step => step.name && step.name.toLowerCase().includes(q));
+        const matchSteps = stage.children && stage.children.some(step => step.name && step.name.toLowerCase().includes(q));
         return matchStage || matchSteps;
       });
     }
@@ -410,8 +410,8 @@ export default {
       this.internalList.forEach(stage => {
         stage.checked = val;
         // 既然选了 Stage，Step 必须清空
-        if (stage.steps) {
-          stage.steps.forEach(step => {
+        if (stage.children) {
+          stage.children.forEach(step => {
             step.checked = false;
           });
         }
@@ -437,8 +437,8 @@ export default {
       this.internalList.forEach(stage => {
         if (type === 'stage') {
           stage.checked = false;
-        } else if (stage.steps) {
-          stage.steps.forEach(step => {
+        } else if (stage.children) {
+          stage.children.forEach(step => {
             step.checked = false;
           });
         }
@@ -453,8 +453,8 @@ export default {
           hasSelection = true;
           currentType = 'stage';
         }
-        if (stage.steps) {
-          stage.steps.forEach(step => {
+        if (stage.children) {
+          stage.children.forEach(step => {
             if (step.checked) {
               hasSelection = true;
               currentType = 'step';
@@ -472,8 +472,8 @@ export default {
       const selected = [];
       this.internalList.forEach(stage => {
         if (stage.checked) selected.push(stage);
-        if (stage.steps) {
-          stage.steps.forEach(step => {
+        if (stage.children) {
+          stage.children.forEach(step => {
             if (step.checked) selected.push(step);
           });
         }
@@ -495,7 +495,8 @@ export default {
         
         this.openPositionDialog(command, selection);
       } else {
-        this.$emit('toolbar-action', command, payload);
+        const eventName = Array.isArray(payload) ? 'toolbar-action' : 'row-action';
+        this.$emit(eventName, command, payload);
       }
     },
     openPositionDialog(command, selection) {
@@ -504,15 +505,15 @@ export default {
       this.selectedNodes = selection;
       
       // 判断选中的类型
-      const hasStage = selection.some(item => item.steps !== undefined);
+      const hasStage = selection.some(item => item.children !== undefined);
       this.selectionType = hasStage ? 'stage' : 'step';
       
       // 过滤掉当前选中的节点及其子节点，防止循环嵌套或逻辑混乱
       const selectionIds = selection.map(i => i.id);
       const filtered = JSON.parse(JSON.stringify(this.internalList)).filter(s => !selectionIds.includes(s.id));
       filtered.forEach(s => {
-        if (s.steps) {
-          s.steps = s.steps.filter(st => !selectionIds.includes(st.id));
+        if (s.children) {
+          s.children = s.children.filter(st => !selectionIds.includes(st.id));
         }
       });
 
@@ -530,7 +531,7 @@ export default {
       this.targetNode = node;
       this.targetParent = parent;
       // 默认位置模式
-      if (this.selectionType === 'step' && node.steps !== undefined) {
+      if (this.selectionType === 'step' && node.children !== undefined) {
         this.positionMode = 'inside';
       } else {
         this.positionMode = 'below';
@@ -543,7 +544,7 @@ export default {
     isSourceStage(stage) {
       if (this.selectionType !== 'step') return false;
       return this.selectedNodes.some(sn => {
-        const parent = this.internalList.find(s => s.steps && s.steps.some(st => st.id === sn.id));
+        const parent = this.internalList.find(s => s.children && s.children.some(st => st.id === sn.id));
         return parent && parent.id === stage.id;
       });
     },
@@ -578,9 +579,9 @@ export default {
         selectedItems = this.internalList.filter(s => selectionIds.includes(s.id));
       } else {
         this.internalList.forEach(s => {
-          if (s.steps) {
-            const steps = s.steps.filter(st => selectionIds.includes(st.id));
-            selectedItems.push(...steps);
+          if (s.children) {
+            const children = s.children.filter(st => selectionIds.includes(st.id));
+            selectedItems.push(...children);
           }
         });
       }
@@ -599,8 +600,8 @@ export default {
           this.internalList = this.internalList.filter(s => !selectionIds.includes(s.id));
         } else {
           this.internalList.forEach(s => {
-            if (s.steps) {
-              s.steps = s.steps.filter(st => !selectionIds.includes(st.id));
+            if (s.children) {
+              s.children = s.children.filter(st => !selectionIds.includes(st.id));
             }
           });
         }
@@ -617,17 +618,17 @@ export default {
         const parentId = position === 'inside' ? targetId : (targetParentId || targetId);
         const parent = this.internalList.find(s => s.id === parentId);
         if (parent) {
-          if (!parent.steps) this.$set(parent, 'steps', []);
+          if (!parent.children) this.$set(parent, 'children', []);
           
           if (position === 'inside') {
-            parent.steps.push(...selectedItems);
+            parent.children.push(...selectedItems);
           } else {
-            const stepIdx = parent.steps.findIndex(st => st.id === targetId);
+            const stepIdx = parent.children.findIndex(st => st.id === targetId);
             if (stepIdx > -1) {
               const insertIdx = position === 'above' ? stepIdx : stepIdx + 1;
-              parent.steps.splice(insertIdx, 0, ...selectedItems);
+              parent.children.splice(insertIdx, 0, ...selectedItems);
             } else {
-              parent.steps.push(...selectedItems);
+              parent.children.push(...selectedItems);
             }
           }
         }
@@ -696,7 +697,7 @@ export default {
       if (!this.searchQuery) return true;
       const q = this.searchQuery.toLowerCase();
       const matchStage = stage.name && stage.name.toLowerCase().includes(q);
-      const matchSteps = stage.steps && stage.steps.some(step => step.name && step.name.toLowerCase().includes(q));
+      const matchSteps = stage.children && stage.children.some(step => step.name && step.name.toLowerCase().includes(q));
       return matchStage || matchSteps;
     },
     isStepVisible(step) {
@@ -719,9 +720,9 @@ export default {
         // 同阶段内移动回滚
         if (action === 'moved') {
           const stage = this.internalList.find(s => s.id === stageId);
-          if (stage && stage.steps) {
-            const item = stage.steps.splice(newIndex, 1)[0];
-            stage.steps.splice(oldIndex, 0, item);
+          if (stage && stage.children) {
+            const item = stage.children.splice(newIndex, 1)[0];
+            stage.children.splice(oldIndex, 0, item);
           }
         } 
         // 跨阶段移动回滚
@@ -729,8 +730,8 @@ export default {
           const oldStage = this.internalList.find(s => s.id === oldStageId);
           const newStage = this.internalList.find(s => s.id === newStageId);
           if (oldStage && newStage) {
-            const item = newStage.steps.splice(newIndex, 1)[0];
-            oldStage.steps.splice(oldIndex, 0, item);
+            const item = newStage.children.splice(newIndex, 1)[0];
+            oldStage.children.splice(oldIndex, 0, item);
           }
         }
       }

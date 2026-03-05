@@ -50,7 +50,7 @@ export default {
           config: '-',
           expanded: true,
           checked: false,
-          steps: [
+          children: [
             { id: 101, no: '1-1', name: '核实信息', description: '核实报警人身份', config: '电话确认', checked: false },
             { id: 102, no: '1-2', name: '现场封锁', description: '疏散人群', config: '警力调配', checked: false }
           ]
@@ -64,7 +64,7 @@ export default {
           remark: '需要多方协作',
           expanded: false,
           checked: false,
-          steps: []
+          children: []
         }
       ],
       customColumns: [
@@ -146,7 +146,7 @@ export default {
         config: '-',
         expanded: true,
         checked: false,
-        steps: []
+        children: []
       };
       this.mockData.push(newStage);
       this.$message.success('已派发增加阶段事件，父组件已添加新行');
@@ -154,7 +154,7 @@ export default {
     // 处理添加步骤
     handleAddStep(stage) {
       const parentNo = stage.no;
-      const stepIdx = (stage.steps || []).length + 1;
+      const stepIdx = (stage.children || []).length + 1;
       const newStep = {
         no: `${parentNo}-${stepIdx}`,
         id: Date.now(),
@@ -163,8 +163,8 @@ export default {
         config: '-',
         checked: false
       };
-      if (!stage.steps) this.$set(stage, 'steps', []);
-      stage.steps.push(newStep);
+      if (!stage.children) this.$set(stage, 'children', []);
+      stage.children.push(newStep);
       stage.expanded = true;
       this.$message.success(`已派发增加步骤事件，已在阶段[${stage.name}]下添加新行`);
     },
@@ -184,8 +184,8 @@ export default {
             .map(s => ({ ...JSON.parse(JSON.stringify(s)), id: Date.now() + Math.random(), name: s.name + ' (副本)' }));
         } else {
           this.mockData.forEach(s => {
-            if (s.steps) {
-              const matches = s.steps.filter(st => selectedIds.includes(st.id));
+            if (s.children) {
+              const matches = s.children.filter(st => selectedIds.includes(st.id));
               matches.forEach(m => {
                 newData.push({ ...JSON.parse(JSON.stringify(m)), id: Date.now() + Math.random(), name: m.name + ' (副本)' });
               });
