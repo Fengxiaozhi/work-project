@@ -92,6 +92,7 @@
         <div v-show="stage.expanded" class="vibe-step-container">
           <draggable
             v-model="stage.steps"
+            :group="{ name: 'steps' }"
             handle=".drag-handle-step"
             animation="200"
             ghost-class="vibe-ghost"
