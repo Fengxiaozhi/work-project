@@ -10,7 +10,7 @@
           :type="action.type"
           :icon="action.icon"
           :disabled="typeof action.disabled === 'function' ? action.disabled(selection) : action.disabled"
-          @click="$emit('toolbar-action', action.command, selection)"
+          @click="handleAction(action.command, selection)"
         >
           {{ action.label }}
         </el-button>
@@ -36,7 +36,12 @@
     <!-- 表头 -->
     <div class="vibe-stage-header">
       <div class="col-check">
-        <el-checkbox :indeterminate="isIndeterminate" v-model="checkAll" @change="handleCheckAll"></el-checkbox>
+        <el-checkbox 
+          :indeterminate="isIndeterminate" 
+          v-model="checkAll" 
+          @change="handleCheckAll"
+          :disabled="selectionStarted && selectionType === 'step'"
+        ></el-checkbox>
       </div>
       <div 
         v-for="col in columns" 
@@ -66,7 +71,11 @@
         <!-- 阶段行 -->
         <div class="vibe-row vibe-stage-row">
           <div class="col-check">
-            <el-checkbox v-model="stage.checked" @change="handleItemCheck"></el-checkbox>
+            <el-checkbox 
+              v-model="stage.checked" 
+              @change="handleItemCheck('stage', stage)"
+              :disabled="selectionStarted && selectionType === 'step'"
+            ></el-checkbox>
             <i class="el-icon-rank drag-handle-stage"></i>
             <!-- 展开箭头挪到这里 -->
             <i 
@@ -97,7 +106,7 @@
               type="text" 
               size="small" 
               :class="action.class"
-              @click="$emit('row-action', action.command, stage)"
+              @click="handleAction(action.command, stage)"
             >
               <i v-if="action.icon" :class="action.icon"></i>
               {{ action.label }}
@@ -122,7 +131,11 @@
               v-show="isStepVisible(step)"
             >
               <div class="col-check">
-                <el-checkbox v-model="step.checked" @change="handleItemCheck"></el-checkbox>
+                <el-checkbox 
+                  v-model="step.checked" 
+                  @change="handleItemCheck('step', step)"
+                  :disabled="selectionStarted && selectionType === 'stage'"
+                ></el-checkbox>
                 <i class="el-icon-rank drag-handle-step"></i>
                 <!-- 占位符，保持对齐 -->
                 <span class="expand-placeholder"></span>
@@ -149,7 +162,7 @@
                   type="text" 
                   size="small" 
                   :class="action.class"
-                  @click="$emit('row-action', action.command, step)"
+                  @click="handleAction(action.command, step)"
                 >
                   <i v-if="action.icon" :class="action.icon"></i>
                   {{ action.label }}
@@ -172,6 +185,121 @@
         <i class="el-icon-info" style="color: #909399; margin-left: 5px; cursor: pointer;"></i>
       </el-tooltip>
     </div>
+
+    <!-- 复制/移动 定位弹窗 -->
+    <el-dialog
+      :title="dialogTitle"
+      :visible.sync="dialogVisible"
+      width="800px"
+      append-to-body
+      custom-class="vibe-position-dialog"
+    >
+      <div class="vibe-dialog-tips">请选择要放置的位置</div>
+      
+      <div class="vibe-dialog-content">
+        <!-- 弹窗内部搜索和操作 -->
+        <div class="vibe-dialog-toolbar">
+          <el-input
+            v-model="dialogSearchQuery"
+            placeholder="搜索节点"
+            size="small"
+            suffix-icon="el-icon-search"
+            style="width: 300px"
+          ></el-input>
+          <div class="actions">
+            <el-button type="text" size="small" @click="dialogToggleAll(false)">
+              <i class="el-icon-s-fold"></i> 全部折叠
+            </el-button>
+            <el-button type="text" size="small" @click="dialogToggleAll(true)">
+              <i class="el-icon-s-unfold"></i> 全部展开
+            </el-button>
+          </div>
+        </div>
+
+        <div class="vibe-dialog-list-container">
+          <!-- 阶段列表 -->
+          <div 
+            v-for="stage in filteredDialogList" 
+            :key="stage.id" 
+            class="vibe-dialog-item-group"
+          >
+            <!-- 阶段行 -->
+            <div 
+              class="vibe-dialog-row vibe-dialog-stage-row"
+              :class="{ 
+                'is-hover': hoverNodeId === stage.id,
+                'is-selected': targetNode && targetNode.id === stage.id
+              }"
+              @mouseenter="handleNodeMouseEnter(stage)"
+              @mouseleave="handleNodeMouseLeave"
+              @click="handleTargetNodeClick(stage, null)"
+            >
+              <div class="node-main">
+                <i 
+                  :class="stage.expanded ? 'el-icon-caret-bottom' : 'el-icon-caret-right'"
+                  class="expand-icon"
+                  @click.stop="stage.expanded = !stage.expanded"
+                ></i>
+                <span class="node-text">{{ stage.no }}. {{ stage.name }}</span>
+                <span v-if="isSourceStage(stage)" class="current-hint">(当前所在)</span>
+              </div>
+              <!-- 选中锁定期或悬停时出现的控制项 -->
+              <div v-if="(targetNode && targetNode.id === stage.id) || hoverNodeId === stage.id" class="node-control">
+                <span class="control-label">{{ selectionType === 'step' ? '加入阶段' : '移至所选' }}</span>
+                <el-radio-group v-model="positionMode" size="mini">
+                  <!-- 只有移动阶段时才显示上下 -->
+                  <template v-if="selectionType === 'stage'">
+                    <el-radio label="below">下方</el-radio>
+                    <el-radio label="above">上方</el-radio>
+                  </template>
+                  <!-- 如果选的是步骤，移向阶段行时仅允许“内部” -->
+                  <el-radio v-else label="inside">内部</el-radio>
+                </el-radio-group>
+              </div>
+            </div>
+
+            <!-- 步骤列表 (仅当选择的是步骤时显示) -->
+            <div v-show="stage.expanded && selectionType === 'step'" class="vibe-dialog-step-container">
+              <div 
+                v-for="step in stage.steps" 
+                :key="step.id" 
+                class="vibe-dialog-row vibe-dialog-step-row"
+                :class="{ 
+                  'is-hover': hoverNodeId === step.id,
+                  'is-selected': targetNode && targetNode.id === step.id
+                }"
+                @mouseenter="handleNodeMouseEnter(step, stage)"
+                @mouseleave="handleNodeMouseLeave"
+                @click="handleTargetNodeClick(step, stage)"
+              >
+                <div class="node-main">
+                  <span class="node-text">{{ step.no }} {{ step.name }}</span>
+                </div>
+                <!-- 选中锁定期或悬停时出现的控制项 -->
+                <div v-if="(targetNode && targetNode.id === step.id) || hoverNodeId === step.id" class="node-control">
+                  <span class="control-label">移至所选</span>
+                  <el-radio-group v-model="positionMode" size="mini">
+                    <el-radio label="below">下方</el-radio>
+                    <el-radio label="above">上方</el-radio>
+                  </el-radio-group>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div slot="footer" class="dialog-footer">
+        <el-button size="small" @click="dialogVisible = false">取消</el-button>
+        <el-button 
+          size="small" 
+          type="primary" 
+          :loading="dialogLoading"
+          :disabled="!targetNode"
+          @click="handleConfirmAction"
+        >确定</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -228,12 +356,40 @@ export default {
   data() {
     return {
       internalList: [],
-      searchQuery: '',
-      checkAll: false,
-      isIndeterminate: false,
+      searchQuery: '', // 顶层搜索框
+      checkAll: false, // 全选状态
+      isIndeterminate: false, // 半选状态
       selection: [],
-      lastDelta: null // 记录最后一次变更，用于高性能回滚
+      lastDelta: null, // 记录最后一次变更，用于高性能回滚
+      
+      // 弹窗状态
+      dialogVisible: false,
+      dialogLoading: false,
+      dialogTitle: '',
+      dialogAction: '', // 'copy' or 'move'
+      dialogSearchQuery: '',
+      selectionType: '', // 'stage' or 'step'
+      hoverNodeId: null,
+      targetNode: null,
+      targetParent: null,
+      selectedNodes: [], // 记录当前选中的节点对象
+      positionMode: 'below', // 'above' or 'below'
+      dialogList: [] ,// 弹窗显示的列表快照
+      
+      // 内部记录选择状态
+      selectionStarted: false
     };
+  },
+  computed: {
+    filteredDialogList() {
+      if (!this.dialogSearchQuery) return this.dialogList;
+      const q = this.dialogSearchQuery.toLowerCase();
+      return this.dialogList.filter(stage => {
+        const matchStage = stage.name && stage.name.toLowerCase().includes(q);
+        const matchSteps = stage.steps && stage.steps.some(step => step.name && step.name.toLowerCase().includes(q));
+        return matchStage || matchSteps;
+      });
+    }
   },
   watch: {
     list: {
@@ -250,33 +406,67 @@ export default {
       });
     },
     handleCheckAll(val) {
+      // 全选只在未开始选择或选择同类型时有效，这里简化为全选 Stage
       this.internalList.forEach(stage => {
         stage.checked = val;
+        // 既然选了 Stage，Step 必须清空
         if (stage.steps) {
           stage.steps.forEach(step => {
-            step.checked = val;
+            step.checked = false;
           });
         }
       });
       this.isIndeterminate = false;
+      this.updateUIState();
       this.updateSelection();
     },
-    handleItemCheck() {
-      let checkedCount = 0;
-      let totalCount = 0;
+    handleItemCheck(type, item) {
+      if (item.checked) {
+        // 如果选中了新类型，清除旧类型的选中
+        if (this.selectionStarted && this.selectionType !== type) {
+          this.clearSelectionByType(this.selectionType);
+        }
+        this.selectionType = type;
+        this.selectionStarted = true;
+      }
+      
+      this.updateUIState();
+      this.updateSelection();
+    },
+    clearSelectionByType(type) {
       this.internalList.forEach(stage => {
-        totalCount++;
-        if (stage.checked) checkedCount++;
-        if (stage.steps) {
+        if (type === 'stage') {
+          stage.checked = false;
+        } else if (stage.steps) {
           stage.steps.forEach(step => {
-            totalCount++;
-            if (step.checked) checkedCount++;
+            step.checked = false;
           });
         }
       });
-      this.checkAll = checkedCount === totalCount && totalCount > 0;
-      this.isIndeterminate = checkedCount > 0 && checkedCount < totalCount;
-      this.updateSelection();
+    },
+    updateUIState() {
+      let hasSelection = false;
+      let currentType = '';
+      
+      this.internalList.forEach(stage => {
+        if (stage.checked) {
+          hasSelection = true;
+          currentType = 'stage';
+        }
+        if (stage.steps) {
+          stage.steps.forEach(step => {
+            if (step.checked) {
+              hasSelection = true;
+              currentType = 'step';
+            }
+          });
+        }
+      });
+      
+      this.selectionStarted = hasSelection;
+      if (hasSelection) {
+        this.selectionType = currentType;
+      }
     },
     updateSelection() {
       const selected = [];
@@ -296,6 +486,157 @@ export default {
     },
     addStep(stage) {
       this.$emit('add-step', stage);
+    },
+    // 处理工具栏或行操作入口
+    handleAction(command, payload) {
+      if (command === 'copy' || command === 'move') {
+        const selection = Array.isArray(payload) ? payload : [payload];
+        if (!selection.length) return;
+        
+        this.openPositionDialog(command, selection);
+      } else {
+        this.$emit('toolbar-action', command, payload);
+      }
+    },
+    openPositionDialog(command, selection) {
+      this.dialogAction = command;
+      this.dialogTitle = command === 'copy' ? '复制' : '移动';
+      this.selectedNodes = selection;
+      
+      // 判断选中的类型
+      const hasStage = selection.some(item => item.steps !== undefined);
+      this.selectionType = hasStage ? 'stage' : 'step';
+      
+      // 过滤掉当前选中的节点及其子节点，防止循环嵌套或逻辑混乱
+      const selectionIds = selection.map(i => i.id);
+      const filtered = JSON.parse(JSON.stringify(this.internalList)).filter(s => !selectionIds.includes(s.id));
+      filtered.forEach(s => {
+        if (s.steps) {
+          s.steps = s.steps.filter(st => !selectionIds.includes(st.id));
+        }
+      });
+
+      this.dialogList = filtered;
+      this.dialogVisible = true;
+      this.dialogLoading = false;
+      this.hoverNodeId = null;
+      this.targetNode = null;
+      this.positionMode = 'below';
+    },
+    handleNodeMouseEnter(node, parent = null) {
+      this.hoverNodeId = node.id;
+    },
+    handleTargetNodeClick(node, parent = null) {
+      this.targetNode = node;
+      this.targetParent = parent;
+      // 默认位置模式
+      if (this.selectionType === 'step' && node.steps !== undefined) {
+        this.positionMode = 'inside';
+      } else {
+        this.positionMode = 'below';
+      }
+    },
+    handleNodeMouseLeave() {
+      this.hoverNodeId = null;
+    },
+    // 判断该阶段是否是当前选中步骤的父容器
+    isSourceStage(stage) {
+      if (this.selectionType !== 'step') return false;
+      return this.selectedNodes.some(sn => {
+        const parent = this.internalList.find(s => s.steps && s.steps.some(st => st.id === sn.id));
+        return parent && parent.id === stage.id;
+      });
+    },
+    dialogToggleAll(expanded) {
+      this.dialogList.forEach(item => {
+        item.expanded = expanded;
+      });
+    },
+    handleConfirmAction() {
+      if (!this.targetNode) return;
+      this.dialogLoading = true;
+      
+      const payload = {
+        action: this.dialogAction,
+        selectionType: this.selectionType,
+        selectionIds: this.selection.map(i => i.id),
+        targetId: this.targetNode.id,
+        targetParentId: this.targetParent ? this.targetParent.id : null,
+        position: this.positionMode
+      };
+      
+      // 派发给外部进行后端更新
+      this.$emit(`drag-${this.dialogAction}`, payload);
+    },
+    // 供外部调用：后端同步成功后提交变更
+    commitAction(resultData) {
+      const { action, selectionType, selectionIds, targetId, targetParentId, position } = resultData;
+      
+      // 1. 获取选中的原始对象
+      let selectedItems = [];
+      if (selectionType === 'stage') {
+        selectedItems = this.internalList.filter(s => selectionIds.includes(s.id));
+      } else {
+        this.internalList.forEach(s => {
+          if (s.steps) {
+            const steps = s.steps.filter(st => selectionIds.includes(st.id));
+            selectedItems.push(...steps);
+          }
+        });
+      }
+
+      // 如果选不中，可能是因为 resultData 格式不对
+      if (!selectedItems.length && action === 'move') return;
+
+      // 2. 如果是复制，使用后端返回的新数据
+      if (action === 'copy') {
+        selectedItems = Array.isArray(resultData.newData) ? resultData.newData : [resultData.newData];
+      }
+
+      // 3. 如果是移动，先从原位置删除
+      if (action === 'move') {
+        if (selectionType === 'stage') {
+          this.internalList = this.internalList.filter(s => !selectionIds.includes(s.id));
+        } else {
+          this.internalList.forEach(s => {
+            if (s.steps) {
+              s.steps = s.steps.filter(st => !selectionIds.includes(st.id));
+            }
+          });
+        }
+      }
+
+      // 4. 插入到新位置
+      if (selectionType === 'stage') {
+        const idx = this.internalList.findIndex(s => s.id === targetId);
+        if (idx > -1) {
+          const insertIdx = position === 'above' ? idx : idx + 1;
+          this.internalList.splice(insertIdx, 0, ...selectedItems);
+        }
+      } else {
+        const parentId = position === 'inside' ? targetId : (targetParentId || targetId);
+        const parent = this.internalList.find(s => s.id === parentId);
+        if (parent) {
+          if (!parent.steps) this.$set(parent, 'steps', []);
+          
+          if (position === 'inside') {
+            parent.steps.push(...selectedItems);
+          } else {
+            const stepIdx = parent.steps.findIndex(st => st.id === targetId);
+            if (stepIdx > -1) {
+              const insertIdx = position === 'above' ? stepIdx : stepIdx + 1;
+              parent.steps.splice(insertIdx, 0, ...selectedItems);
+            } else {
+              parent.steps.push(...selectedItems);
+            }
+          }
+        }
+      }
+
+      // 5. 收尾
+      this.dialogVisible = false;
+      this.dialogLoading = false;
+      this.selection = [];
     },
     // 阶段顺序变更
     onStageChange(evt) {
@@ -526,6 +867,145 @@ export default {
   .text-danger {
     color: #F56C6C;
     &:hover { color: lighten(#F56C6C, 10%); }
+  }
+}
+
+// 弹窗样式库
+.vibe-position-dialog {
+  .el-dialog__body {
+    padding: 20px 25px;
+  }
+  
+  .vibe-dialog-tips {
+    margin-bottom: 20px;
+    font-weight: 500;
+  }
+
+  .vibe-dialog-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .vibe-dialog-list-container {
+    max-height: 450px;
+    overflow-y: auto;
+    border: 1px solid #ebeef5;
+    border-radius: 4px;
+    padding: 10px;
+  }
+
+  .vibe-dialog-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    border-radius: 6px;
+    transition: background-color 0.15s ease-out;
+    cursor: default;
+    margin: 2px 0;
+
+    &.is-hover {
+      background-color: #f0f7ff;
+      
+      .node-text {
+        color: @primary-color;
+        font-weight: 600;
+      }
+    }
+
+    &.is-selected {
+      background-color: #ecf5ff;
+      border: 1px solid @primary-color;
+      box-shadow: inset 0 0 0 1px @primary-color;
+      
+      .node-text {
+        color: @primary-color;
+        font-weight: bold;
+      }
+    }
+
+    &.is-disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      &:hover { background-color: transparent !important; }
+    }
+
+    .node-main {
+      display: flex;
+      align-items: center;
+      flex: 1;
+      
+      .expand-icon {
+        margin-right: 10px;
+        color: #c0c4cc;
+        cursor: pointer;
+        width: 14px;
+        text-align: center;
+        transition: transform 0.2s;
+        
+        &:hover { color: @primary-color; }
+      }
+      
+      .node-text {
+        font-size: 14px;
+        color: #303133;
+        transition: all 0.2s;
+      }
+    }
+
+    .node-control {
+      display: flex;
+      align-items: center;
+      background: #fff;
+      padding: 5px 14px;
+      border-radius: 20px;
+      border: 1px solid #dcdfe6;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      animation: vibeSlideIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+
+      .control-label {
+        margin-right: 15px;
+        font-size: 12px;
+        color: #606266;
+        font-weight: bold;
+      }
+      
+      /deep/ .el-radio {
+        margin-right: 10px;
+        &:last-child { margin-right: 0; }
+        .el-radio__label { padding-left: 5px; font-size: 12px; }
+      }
+    }
+  }
+
+  @keyframes vibeSlideIn {
+    from { opacity: 0; transform: translateX(10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .vibe-dialog-stage-row {
+    font-weight: 500;
+  }
+
+  .current-hint {
+    font-size: 12px;
+    color: #909399;
+    margin-left: 8px;
+    font-weight: normal;
+    font-style: italic;
+  }
+
+  .vibe-dialog-step-container {
+    padding-left: 25px;
+  }
+  
+  .vibe-dialog-step-row {
+    margin-top: 2px;
+    color: #606266;
   }
 }
 </style>

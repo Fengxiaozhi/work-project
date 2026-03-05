@@ -23,6 +23,8 @@
           @drag-save="handleDragSave"
           @add-stage="handleAddStage"
           @add-step="handleAddStep"
+          @drag-copy="handleDragCopy"
+          @drag-move="handleDragMove"
         ></vibe-stage-list>
       </section>
 
@@ -165,6 +167,70 @@ export default {
       stage.steps.push(newStep);
       stage.expanded = true;
       this.$message.success(`已派发增加步骤事件，已在阶段[${stage.name}]下添加新行`);
+    },
+    // 处理内置复制逻辑
+    async handleDragCopy(payload) {
+      try {
+        // 模拟后端处理：生成带有新 ID 的副本数据
+        const result = await this.simulateComplexAction(payload);
+        
+        // 模拟返回的新数据 (通常后端会返回 fresh IDs)
+        // 这里简单处理：克隆原始数据并修改 ID
+        const selectedIds = payload.selectionIds;
+        let newData = [];
+        if (payload.selectionType === 'stage') {
+          newData = this.mockData
+            .filter(s => selectedIds.includes(s.id))
+            .map(s => ({ ...JSON.parse(JSON.stringify(s)), id: Date.now() + Math.random(), name: s.name + ' (副本)' }));
+        } else {
+          this.mockData.forEach(s => {
+            if (s.steps) {
+              const matches = s.steps.filter(st => selectedIds.includes(st.id));
+              matches.forEach(m => {
+                newData.push({ ...JSON.parse(JSON.stringify(m)), id: Date.now() + Math.random(), name: m.name + ' (副本)' });
+              });
+            }
+          });
+        }
+
+        // 调用组件的 commitAction 完成手术级插入
+        this.$refs.vibeList.commitAction({
+          ...payload,
+          newData: newData
+        });
+        
+        this.$message.success('复制成功 (后端已同步)');
+      } catch (error) {
+        this.$message.error('同步失败: ' + error.message);
+        // 失败时不调用 commitAction，弹窗会自动保持 loading 或由处理逻辑关闭
+        this.$refs.vibeList.dialogLoading = false; 
+      }
+    },
+    // 处理内置移动逻辑
+    async handleDragMove(payload) {
+      try {
+        // 模拟后端变更
+        await this.simulateComplexAction(payload);
+        
+        // 提交变更：移动逻辑不需要 newData，组件会自动执行本地 splice
+        this.$refs.vibeList.commitAction(payload);
+        
+        this.$message.success('移动成功');
+      } catch (error) {
+        this.$message.error('同步失败: ' + error.message);
+        this.$refs.vibeList.dialogLoading = false;
+      }
+    },
+    simulateComplexAction(payload) {
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          if (Math.random() > 0.9) { // 降低演示失败率
+            reject(new Error('服务端处理超时'));
+          } else {
+            resolve();
+          }
+        }, 1200);
+      });
     }
   }
 };
