@@ -21,6 +21,8 @@
           @row-action="handleRowAction"
           @selection-change="handleSelectionChange"
           @drag-save="handleDragSave"
+          @add-stage="handleAddStage"
+          @add-step="handleAddStep"
         ></vibe-stage-list>
       </section>
 
@@ -131,6 +133,38 @@ export default {
           }
         }, 1000);
       });
+    },
+    // 处理添加阶段
+    handleAddStage() {
+      const newStage = {
+        no: String(this.mockData.length + 1).padStart(2, '0'),
+        id: Date.now(),
+        name: '新阶段',
+        description: '-',
+        config: '-',
+        expanded: true,
+        checked: false,
+        steps: []
+      };
+      this.mockData.push(newStage);
+      this.$message.success('已派发增加阶段事件，父组件已添加新行');
+    },
+    // 处理添加步骤
+    handleAddStep(stage) {
+      const parentNo = stage.no;
+      const stepIdx = (stage.steps || []).length + 1;
+      const newStep = {
+        no: `${parentNo}-${stepIdx}`,
+        id: Date.now(),
+        name: '新步骤',
+        description: '-',
+        config: '-',
+        checked: false
+      };
+      if (!stage.steps) this.$set(stage, 'steps', []);
+      stage.steps.push(newStep);
+      stage.expanded = true;
+      this.$message.success(`已派发增加步骤事件，已在阶段[${stage.name}]下添加新行`);
     }
   }
 };

@@ -158,7 +158,7 @@
             </div>
           </draggable>
           <!-- 添加步骤 -->
-          <div class="vibe-add-step">
+          <div v-if="showAddStep" class="vibe-add-step">
             <el-button type="text" icon="el-icon-plus" @click="addStep(stage)">添加步骤</el-button>
           </div>
         </div>
@@ -166,7 +166,7 @@
     </draggable>
 
     <!-- 添加阶段 -->
-    <div class="vibe-add-stage">
+    <div v-if="showAddStage" class="vibe-add-stage">
       <el-button type="text" icon="el-icon-plus" @click="addStage">添加阶段</el-button>
       <el-tooltip content="添加一个新阶段分支" placement="right">
         <i class="el-icon-info" style="color: #909399; margin-left: 5px; cursor: pointer;"></i>
@@ -213,6 +213,16 @@ export default {
         { label: '删除', command: 'delete', class: 'text-danger' },
         { label: '', command: 'more', icon: 'el-icon-more' }
       ]
+    },
+    // 是否显示添加阶段按钮
+    showAddStage: {
+      type: Boolean,
+      default: true
+    },
+    // 是否显示添加步骤按钮
+    showAddStep: {
+      type: Boolean,
+      default: true
     }
   },
   data() {
@@ -282,28 +292,10 @@ export default {
       this.$emit('selection-change', selected);
     },
     addStage() {
-      const newStage = {
-        id: Date.now(),
-        name: '新建阶段',
-        description: '',
-        config: '',
-        expanded: true,
-        checked: false,
-        steps: []
-      };
-      this.internalList.push(newStage);
+      this.$emit('add-stage');
     },
     addStep(stage) {
-      const newStep = {
-        id: Date.now(),
-        name: '新建步骤',
-        description: '',
-        config: '',
-        checked: false
-      };
-      if (!stage.steps) this.$set(stage, 'steps', []);
-      stage.steps.push(newStep);
-      stage.expanded = true;
+      this.$emit('add-step', stage);
     },
     // 阶段顺序变更
     onStageChange(evt) {
