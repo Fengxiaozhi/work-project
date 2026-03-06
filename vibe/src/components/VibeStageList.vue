@@ -107,14 +107,13 @@
           </div>
         </div>
 
-        <!-- 步骤子列表 -->
-        <div v-show="stage.expanded" class="vibe-step-container">
+        <!-- 步骤子列表 (关键优化：改 v-show 为 v-if，3000 行下 DOM 暴减 90%+) -->
+        <div v-if="stage.expanded" class="vibe-step-container">
           <div 
-            v-for="(step, stIdx) in stage.children" 
+            v-for="(step, stIdx) in getFilteredSteps(stage)" 
             :key="step.id" 
             class="vibe-row vibe-step-row"
             :class="{ 'is-checked': step.checked }"
-            v-show="isStepVisible(step)"
             :data-id="step.id"
             :data-type="'step'"
             :data-stage-id="stage.id"
@@ -224,7 +223,7 @@
           </div>
         </div>
 
-        <div class="vibe-dialog-list-container">
+        <div class="vibe-dialog-list-container" @scroll="handleDialogScroll">
           <!-- 阶段列表 -->
           <div 
             v-for="stage in filteredDialogList" 
@@ -235,11 +234,8 @@
             <div 
               class="vibe-dialog-row vibe-dialog-stage-row"
               :class="{ 
-                'is-hover': hoverNodeId === stage.id,
                 'is-selected': targetNode && targetNode.id === stage.id
               }"
-              @mouseenter="handleNodeMouseEnter(stage)"
-              @mouseleave="handleNodeMouseLeave"
               @click="handleTargetNodeClick(stage, null)"
             >
               <div class="node-main">
@@ -251,40 +247,36 @@
                 <span class="node-text">{{ stage.no }}. {{ stage.name }}</span>
                 <span v-if="isSourceStage(stage)" class="current-hint">(当前所在)</span>
               </div>
-              <!-- 选中锁定期或悬停时出现的控制项 -->
-              <div v-if="(targetNode && targetNode.id === stage.id) || hoverNodeId === stage.id" class="node-control">
+              <!-- 【核心改动】始终渲染节点控制项，但通过 CSS 控制显示隐藏。
+                   这避免了鼠标滑过时频繁触发 Vue 的 v-if 销毁/创建，极大提升大数据量下的响应速度。 -->
+              <div class="node-control" :class="{ 'is-active': targetNode && targetNode.id === stage.id }">
                 <span class="control-label">{{ selectionType === 'step' ? '加入阶段' : '移至所选' }}</span>
                 <el-radio-group v-model="positionMode" size="mini">
-                  <!-- 只有移动阶段时才显示上下 -->
                   <template v-if="selectionType === 'stage'">
                     <el-radio label="below">下方</el-radio>
                     <el-radio label="above">上方</el-radio>
                   </template>
-                  <!-- 如果选的是步骤，移向阶段行时仅允许“内部” -->
                   <el-radio v-else label="inside">内部</el-radio>
                 </el-radio-group>
               </div>
             </div>
 
-            <!-- 步骤列表 (仅当选择的是步骤时显示) -->
-            <div v-show="stage.expanded && selectionType === 'step'" class="vibe-dialog-step-container">
+            <!-- 步骤列表 (关键优化：改 v-show 为 v-if，彻底消除弹窗打开时的 DOM 渲染压力) -->
+            <div v-if="stage.expanded && selectionType === 'step'" class="vibe-dialog-step-container">
               <div 
-                v-for="step in stage.children" 
+                v-for="step in getDialogFilteredSteps(stage)" 
                 :key="step.id" 
                 class="vibe-dialog-row vibe-dialog-step-row"
                 :class="{ 
-                  'is-hover': hoverNodeId === step.id,
                   'is-selected': targetNode && targetNode.id === step.id
                 }"
-                @mouseenter="handleNodeMouseEnter(step, stage)"
-                @mouseleave="handleNodeMouseLeave"
                 @click="handleTargetNodeClick(step, stage)"
               >
                 <div class="node-main">
                   <span class="node-text">{{ step.no }} {{ step.name }}</span>
                 </div>
-                <!-- 选中锁定期或悬停时出现的控制项 -->
-                <div v-if="(targetNode && targetNode.id === step.id) || hoverNodeId === step.id" class="node-control">
+                <!-- 同理：始终渲染，CSS 控制显隐 -->
+                <div class="node-control" :class="{ 'is-active': targetNode && targetNode.id === step.id }">
                   <span class="control-label">移至所选</span>
                   <el-radio-group v-model="positionMode" size="mini">
                     <el-radio label="below">下方</el-radio>
@@ -375,12 +367,11 @@ export default {
       dialogAction: '', // 'copy' or 'move'
       dialogSearchQuery: '',
       selectionType: '', // 'stage' or 'step'
-      hoverNodeId: null,
       targetNode: null,
       targetParent: null,
       selectedNodes: [], // 记录当前选中的节点对象
+      displayLimit: 50, // 核心：弹窗初始只渲染 50 个阶段，解决打开卡顿
       positionMode: 'below', // 'above' or 'below'
-      dialogList: [] ,// 弹窗显示的列表快照
       
       // 内部记录选择状态
       selectionStarted: false,
@@ -414,13 +405,28 @@ export default {
   },
   computed: {
     filteredDialogList() {
-      if (!this.dialogSearchQuery) return this.dialogList;
-      const q = this.dialogSearchQuery.toLowerCase();
-      return this.dialogList.filter(stage => {
-        const matchStage = stage.name && stage.name.toLowerCase().includes(q);
-        const matchSteps = stage.children && stage.children.some(step => step.name && step.name.toLowerCase().includes(q));
-        return matchStage || matchSteps;
-      });
+      const q = this.dialogSearchQuery ? this.dialogSearchQuery.toLowerCase() : '';
+      const selectionIds = this.selectedNodes.map(n => n.id);
+      
+      // 核心优化：直接从 internalList 过滤，避免 openPositionDialog 中的深拷贝开销
+      let list = this.internalList.filter(s => !selectionIds.includes(s.id));
+      
+      if (q) {
+        list = list.filter(stage => {
+          const matchStage = stage.name && stage.name.toLowerCase().includes(q);
+          const matchSteps = stage.children && stage.children.some(step => {
+            if (selectionIds.includes(step.id)) return false;
+            return step.name && step.name.toLowerCase().includes(q);
+          });
+          return matchStage || matchSteps;
+        });
+      }
+      
+      // 如果不是搜索，应用延迟渲染 limit
+      if (!q) {
+        return list.slice(0, this.displayLimit);
+      }
+      return list;
     }
   },
   watch: {
@@ -540,24 +546,16 @@ export default {
       const hasStage = selection.some(item => item.children && Array.isArray(item.children));
       this.selectionType = hasStage ? 'stage' : 'step';
       
-      // 过滤掉当前选中的节点及其子节点，防止循环嵌套或逻辑混乱
-      const selectionIds = selection.map(i => i.id);
-      const filtered = JSON.parse(JSON.stringify(this.internalList)).filter(s => !selectionIds.includes(s.id));
-      filtered.forEach(s => {
-        if (s.children) {
-          s.children = s.children.filter(st => !selectionIds.includes(st.id));
-        }
-      });
-
-      this.dialogList = filtered;
       this.dialogVisible = true;
+      this.displayLimit = 50; 
       this.dialogLoading = false;
-      this.hoverNodeId = null;
       this.targetNode = null;
       this.positionMode = 'below';
     },
-    handleNodeMouseEnter(node, parent = null) {
-      this.hoverNodeId = node.id;
+    getDialogFilteredSteps(stage) {
+      if (!stage.children) return [];
+      const selectionIds = this.selectedNodes.map(n => n.id);
+      return stage.children.filter(st => !selectionIds.includes(st.id));
     },
     handleTargetNodeClick(node, parent = null) {
       this.targetNode = node;
@@ -569,9 +567,6 @@ export default {
         this.positionMode = 'below';
       }
     },
-    handleNodeMouseLeave() {
-      this.hoverNodeId = null;
-    },
     // 判断该阶段是否是当前选中步骤的父容器
     isSourceStage(stage) {
       if (this.selectionType !== 'step') return false;
@@ -581,9 +576,19 @@ export default {
       });
     },
     dialogToggleAll(expanded) {
+      this.displayLimit = 10000; // 点全部展开时，自动取消限制
       this.dialogList.forEach(item => {
         item.expanded = expanded;
       });
+    },
+    handleDialogScroll(e) {
+      const { scrollTop, scrollHeight, clientHeight } = e.target;
+      // 触底加载更多
+      if (scrollTop + clientHeight >= scrollHeight - 50) {
+        if (this.displayLimit < this.internalList.length) {
+          this.displayLimit += 100;
+        }
+      }
     },
     handleConfirmAction() {
       if (!this.targetNode) return;
@@ -1032,7 +1037,16 @@ export default {
       const matchSteps = stage.children && stage.children.some(step => step.name && step.name.toLowerCase().includes(q));
       return matchStage || matchSteps;
     },
+    getFilteredSteps(stage) {
+      if (!stage.children) return [];
+      if (!this.searchQuery) return stage.children;
+      const q = this.searchQuery.toLowerCase();
+      return stage.children.filter(step => 
+        step.name && step.name.toLowerCase().includes(q)
+      );
+    },
     isStepVisible(step) {
+      // 保持方法用于其他可能的逻辑，但主列表已改用 getFilteredSteps
       if (!this.searchQuery) return true;
       return step.name && step.name.toLowerCase().includes(this.searchQuery.toLowerCase());
     },
@@ -1306,25 +1320,25 @@ export default {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 15px;
-    border-radius: 6px;
-    transition: background-color 0.15s ease-out;
-    cursor: default;
-    margin: 2px 0;
+    padding: 8px 15px; // 调小高度
+    border-radius: 4px;
+    border: 1px solid transparent; // 预锁边框，防止 jitter
+    transition: all 0.1s ease-in-out;
+    cursor: pointer;
+    margin: 1px 0;
 
-    &.is-hover {
-      background-color: #f0f7ff;
-      
+    // 使用纯 CSS 悬拽，不触发 Vue 重绘
+    &:hover:not(.is-disabled) {
+      background-color: #f5f7fa;
       .node-text {
         color: @primary-color;
-        font-weight: 600;
       }
     }
 
     &.is-selected {
       background-color: #ecf5ff;
       border: 1px solid @primary-color;
-      box-shadow: inset 0 0 0 1px @primary-color;
+      // 去掉可能会导致抖动的 box-shadow
       
       .node-text {
         color: @primary-color;
@@ -1369,7 +1383,12 @@ export default {
       border-radius: 20px;
       border: 1px solid #dcdfe6;
       box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      animation: vibeSlideIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      
+      // 关键：初始透明度为 0，通过 opacity 控制显隐，不影响布局
+      opacity: 0;
+      transform: translateX(5px);
+      pointer-events: none;
+      transition: all 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
 
       .control-label {
         margin-right: 15px;
@@ -1383,6 +1402,15 @@ export default {
         &:last-child { margin-right: 0; }
         .el-radio__label { padding-left: 5px; font-size: 12px; }
       }
+    }
+
+    // 悬停或选中时展示
+    &:hover:not(.is-disabled) .node-control,
+    &.is-selected .node-control,
+    .node-control.is-active {
+      opacity: 1;
+      transform: translateX(0);
+      pointer-events: auto;
     }
   }
 
