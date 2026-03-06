@@ -404,7 +404,12 @@ export default {
       rowGhostHeight: 40,
       
       // 记录初始位置以便同级排序补偿
-      dragStartIndex: -1
+      dragStartIndex: -1,
+      
+      // 高性能优化：大数据量下的坐标快照
+      layoutMap: [],
+      autoScrollSpeed: 0,
+      rafId: null
     };
   },
   computed: {
@@ -676,23 +681,28 @@ export default {
       this.dragType = type;
       this.targetStage = parent;
       this.dragStartIndex = index;
-      this.draggingNode = item;
       
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
-      this.targetNodeId = item.id;
-      this.dropPosition = 'above';
-      this.dropLineTop = null; // 初始不显示线，直到触发 move 中的感应函数
+      this._lastClientY = e.clientY;
+      this._lastClientX = e.clientX;
+      
+      const targetEl = e.currentTarget.closest(type === 'stage' ? '.vibe-stage-group' : '.vibe-row');
+      const rect = targetEl.getBoundingClientRect();
+      this.rowGhostHeight = rect.height;
+      this.mouseIndicatorY = rect.top - this.$el.getBoundingClientRect().top;
       
       if (item.checked) {
         this.draggingSelection = this.selection.filter(it => {
-          // 健壮性判断：有子节点（数组）且不为 null 的被视为 Stage
           const isStage = it.children && Array.isArray(it.children);
           return type === 'stage' ? isStage : !isStage;
         });
       } else {
         this.draggingSelection = [item];
       }
+
+      // 【核心优化】在大数据量下，拖拽开始时拍摄布局快照
+      this.createLayoutSnapshot();
 
       window.addEventListener('mousemove', this.handleManualMove);
       window.addEventListener('mouseup', this.handleManualUp);
@@ -701,6 +711,61 @@ export default {
       if (container) {
         container.addEventListener('scroll', this.handleManualMove);
       }
+
+      // 【核心优化】启动 RAF 自动滚动引擎
+      this.startRafAutoScroll();
+    },
+    createLayoutSnapshot() {
+      const container = this.$refs.scrollContainer;
+      if (!container) return;
+      
+      const snapshot = [];
+      if (this.dragType === 'stage') {
+        const groups = container.querySelectorAll('.vibe-stage-group');
+        groups.forEach((group, idx) => {
+          const rect = group.getBoundingClientRect();
+          snapshot.push({
+            id: group.dataset.id,
+            top: rect.top,
+            bottom: rect.bottom,
+            height: rect.height,
+            index: idx,
+            el: group
+          });
+        });
+      } else {
+        const rows = container.querySelectorAll('.vibe-row');
+        rows.forEach((row) => {
+          const rect = row.getBoundingClientRect();
+          snapshot.push({
+            id: row.dataset.id,
+            top: rect.top,
+            bottom: rect.bottom,
+            height: rect.height,
+            isHeader: row.classList.contains('vibe-stage-row'),
+            el: row
+          });
+        });
+      }
+      this.layoutMap = snapshot;
+    },
+    startRafAutoScroll() {
+      if (this.rafId) return;
+      const step = () => {
+        if (!this.isDragging) return;
+        if (this.autoScrollSpeed !== 0) {
+          const container = this.$refs.scrollContainer;
+          if (container) {
+            container.scrollTop += this.autoScrollSpeed;
+            // 滚动后由于物理坐标变了，我们需要更新快照坐标，
+            // 但为了性能，我们通过 offset 来修正而不是重新拍摄
+            // 这里为了简单，只在 move 里重新计算吸附位置
+            this.calculateDropPosition(this._lastClientY);
+          }
+        }
+        this.rafId = requestAnimationFrame(step);
+      };
+      this.rafId = requestAnimationFrame(step);
     },
     handleManualMove(e) {
       if (!this.isDragging) return;
@@ -722,74 +787,42 @@ export default {
       this.handleAutoScroll(clientY);
     },
     calculateDropPosition(y) {
-      const container = this.$refs.scrollContainer;
-      if (!container) return;
+      if (!this.layoutMap || this.layoutMap.length === 0) return;
       
       const rootRect = this.$el.getBoundingClientRect();
+      const container = this.$refs.scrollContainer;
+      const scrollTop = container ? container.scrollTop : 0;
+      
       let bestDist = Infinity;
       let bestPos = { top: 0, index: 0, stage: null, nodeId: null, pos: 'above' };
 
-      // 1. 如果拖动的是阶段
-      if (this.dragType === 'stage') {
-        const groups = container.querySelectorAll('.vibe-stage-group');
-        groups.forEach(group => {
-          const rect = group.getBoundingClientRect();
-          const nodeId = group.dataset.id;
-          const mid = rect.top + rect.height / 2;
+      // 【核心优化】直接从内存快照中进行坐标比对，不触碰 DOM
+      for (let i = 0; i < this.layoutMap.length; i++) {
+        const item = this.layoutMap[i];
+        const mid = item.top + item.height / 2;
 
-          // 使用“中点判定法”：如果在组内，根据上半截或下半截决定
-          if (y >= rect.top && y <= rect.bottom) {
-            const pos = y < mid ? 'above' : 'below';
-            bestDist = 0; // 容器内强制命中
-            bestPos = { 
-              top: (pos === 'above' ? rect.top : rect.bottom) - rootRect.top, 
-              index: this.getStageIndex(group, pos),
-              nodeId, pos
-            };
-          } else {
-            // 不在组内，则寻找最近的边界
-            const dTop = Math.abs(y - rect.top);
-            if (dTop < bestDist) {
-              bestDist = dTop;
-              bestPos = { top: rect.top - rootRect.top, index: this.getStageIndex(group, 'above'), nodeId, pos: 'above' };
-            }
-            const dBottom = Math.abs(y - rect.bottom);
-            if (dBottom < bestDist) {
-              bestDist = dBottom;
-              bestPos = { top: rect.bottom - rootRect.top, index: this.getStageIndex(group, 'below'), nodeId, pos: 'below' };
-            }
-          }
-        });
-      } else {
-        // 2. 如果拖动的是步骤
-        const rows = container.querySelectorAll('.vibe-row');
-        rows.forEach(row => {
-          const rect = row.getBoundingClientRect();
-          const nodeId = row.dataset.id;
-          const mid = rect.top + rect.height / 2;
-
-          if (y >= rect.top && y <= rect.bottom) {
-            const pos = y < mid ? 'above' : 'below';
-            bestDist = 0;
+        if (y >= item.top && y <= item.bottom) {
+          const pos = y < mid ? 'above' : 'below';
+          bestDist = 0;
+          
+          if (this.dragType === 'stage') {
             bestPos = {
-              top: (pos === 'above' ? rect.top : rect.bottom) - rootRect.top,
-              index: this.getRowIndex(row, pos),
-              stage: this.getRowParent(row),
-              nodeId, pos
+              top: (pos === 'above' ? item.top : item.bottom) - rootRect.top,
+              index: pos === 'above' ? item.index : item.index + 1,
+              nodeId: item.id,
+              pos
             };
           } else {
-            const dTop = Math.abs(y - rect.top);
-            if (dTop < bestDist) {
-              bestDist = dTop;
-              bestPos = { top: rect.top - rootRect.top, index: this.getRowIndex(row, 'above'), stage: this.getRowParent(row), nodeId, pos: 'above' };
-            }
-            const dBottom = Math.abs(y - rect.bottom);
-            if (dBottom < bestDist) {
-              bestDist = dBottom;
-              bestPos = { top: rect.bottom - rootRect.top, index: this.getRowIndex(row, 'below'), stage: this.getRowParent(row), nodeId, pos: 'below' };
-            }
+            bestPos = {
+              top: (pos === 'above' ? item.top : item.bottom) - rootRect.top,
+              index: this.getRowIndexCached(item, pos),
+              stage: this.getRowParentCached(item),
+              nodeId: item.id,
+              pos
+            };
           }
-        });
+          break;
+        }
       }
 
       if (bestDist < 50) {
@@ -799,6 +832,21 @@ export default {
         this.targetNodeId = bestPos.nodeId;
         this.dropPosition = bestPos.pos;
       }
+    },
+    // 快照版本的索引获取
+    getRowIndexCached(item, pos) {
+      if (item.isHeader) return -1;
+      const stageGroup = item.el.closest('.vibe-stage-group');
+      if (!stageGroup) return -1;
+      const container = stageGroup.querySelector('.vibe-step-container');
+      const allRows = Array.from(container.querySelectorAll('.vibe-step-row'));
+      const idx = allRows.indexOf(item.el);
+      return pos === 'above' ? idx : idx + 1;
+    },
+    getRowParentCached(item) {
+      const stageGroup = item.el.closest('.vibe-stage-group');
+      if (!stageGroup) return null;
+      return this.internalList.find(s => s.id == stageGroup.dataset.id);
     },
     getStageIndex(group, pos) {
       const allGroups = Array.from(this.$refs.scrollContainer.querySelectorAll('.vibe-stage-group'));
@@ -831,6 +879,11 @@ export default {
         container.removeEventListener('scroll', this.handleManualMove);
       }
       
+      if (this.rafId) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+      
       if (!this.isDragging) return;
       
       // 如果没有显示指示线（没触发吸附），则不执行移动，直接重置
@@ -841,6 +894,18 @@ export default {
       
       this.executeDrop();
       this.resetDragState();
+    },
+    resetDragState() {
+      this.isDragging = false;
+      this.dragType = '';
+      this.draggingSelection = [];
+      this.dropLineTop = null;
+      this.targetIndex = -1;
+      this.targetStage = null;
+      this.targetNodeId = null;
+      this.dragStartIndex = -1;
+      this.layoutMap = [];
+      this.autoScrollSpeed = 0;
     },
     executeDrop() {
       const type = this.dragType;
