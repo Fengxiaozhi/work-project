@@ -851,31 +851,53 @@ export default {
         const originalList = [...this.internalList];
         const targetRawIdx = originalList.findIndex(s => s.id == this.targetNodeId);
         
+        // 1. 预先捕获原始索引（在过滤之前！）
+        const moves = selectedItems.map((item, i) => ({
+          type: 'stage',
+          item,
+          oldIndex: originalList.findIndex(s => s.id == item.id),
+          newIndex: -1, // 稍后更新
+          oldParentId: null,
+          newParentId: null
+        }));
+
+        this.internalList = this.internalList.filter(item => !selectionIds.includes(item.id));
+
         if (targetRawIdx === -1) {
-          // 如果真的没找到目标（比如在所有项之外），默认逻辑
-          this.internalList = this.internalList.filter(item => !selectionIds.includes(item.id));
+          // 移动到末尾
+          moves.forEach((m, i) => m.newIndex = this.internalList.length + i);
           this.internalList.push(...selectedItems);
-          this.$emit('drag-save', { type: 'stage', item: selectedItems[0], newIndex: this.internalList.length - selectedItems.length });
+          this.$emit('drag-save', moves);
         } else {
-          this.internalList = this.internalList.filter(item => !selectionIds.includes(item.id));
           let targetInsertionIdx = this.dropPosition === 'above' ? targetRawIdx : targetRawIdx + 1;
           const movedBeforeTarget = originalList.slice(0, targetInsertionIdx).filter(s => selectionIds.includes(s.id)).length;
           let finalIdx = targetInsertionIdx - movedBeforeTarget;
-
           finalIdx = Math.max(0, Math.min(finalIdx, this.internalList.length));
+          
+          moves.forEach((m, i) => m.newIndex = finalIdx + i);
           this.internalList.splice(finalIdx, 0, ...selectedItems);
-          this.$emit('drag-save', { type: 'stage', item: selectedItems[0], newIndex: finalIdx });
+          this.$emit('drag-save', moves);
         }
       } else {
         if (!stage) return;
         const fromStage = this.internalList.find(s => s.children && s.children.some(st => st.id == selectedItems[0].id));
         const isSameStage = fromStage && fromStage.id == stage.id;
         
-        if (!stage.children) this.$set(stage, 'children', []);
-        const originalChildren = [...stage.children];
-        const targetRawIdx = originalChildren.findIndex(st => st.id == this.targetNodeId);
+        const originalFromChildren = fromStage ? [...fromStage.children] : [];
+        const originalTargetChildren = [...(stage.children || [])];
+        const targetRawIdx = originalTargetChildren.findIndex(st => st.id == this.targetNodeId);
         
-        // 1. 从原阶段移除
+        // 1. 预先捕获原始索引
+        const moves = selectedItems.map((item, i) => ({
+          type: 'step',
+          item,
+          oldIndex: fromStage ? originalFromChildren.findIndex(st => st.id == item.id) : -1,
+          newIndex: -1, // 稍后更新
+          oldParentId: fromStage ? fromStage.id : null,
+          newParentId: stage.id
+        }));
+
+        // 2. 从原阶段移除
         if (fromStage) fromStage.children = fromStage.children.filter(st => !selectionIds.includes(st.id));
         
         // 3. 计算插入位置
@@ -884,28 +906,24 @@ export default {
           let targetInsertionIdx = this.dropPosition === 'above' ? targetRawIdx : targetRawIdx + 1;
           finalIdx = targetInsertionIdx;
           if (isSameStage) {
-            const movedBeforeTarget = originalChildren.slice(0, targetInsertionIdx).filter(st => selectionIds.includes(st.id)).length;
+            const movedBeforeTarget = originalTargetChildren.slice(0, targetInsertionIdx).filter(st => selectionIds.includes(st.id)).length;
             finalIdx = targetInsertionIdx - movedBeforeTarget;
           }
         } else {
-          // 如果目标不在 children 里，但确实有 targetNodeId
-          // 检查 targetNodeId 是否就是当前 stage 的 ID（拖到了阶段头部）
           if (this.targetNodeId == stage.id && this.dropPosition === 'above') {
             finalIdx = 0;
           } else {
-            finalIdx = stage.children.length;
+            finalIdx = stage.children ? stage.children.length : 0;
           }
         }
 
-        finalIdx = Math.max(0, Math.min(finalIdx, stage.children.length));
+        finalIdx = Math.max(0, Math.min(finalIdx, stage.children ? stage.children.length : 0));
+        
+        // 4. 更新 newIndex 并插入
+        moves.forEach((m, i) => m.newIndex = finalIdx + i);
+        if (!stage.children) this.$set(stage, 'children', []);
         stage.children.splice(finalIdx, 0, ...selectedItems);
-        this.$emit('drag-save', { 
-          type: 'step', 
-          item: selectedItems[0], 
-          newIndex: finalIdx, 
-          stageId: stage.id,
-          oldStageId: fromStage ? fromStage.id : null
-        });
+        this.$emit('drag-save', moves);
       }
     },
     handleAutoScroll(y) {

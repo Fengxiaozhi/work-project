@@ -100,9 +100,13 @@ export default {
       this.$message.info(`Row Action: ${command} on ${row.name}`);
     },
     // 将变更保存到后端
-    async handleDragSave(change) {
-      const { type, item, action } = change;
-      const desc = type === 'stage' ? `阶段 [${item.name}]` : `步骤 [${item.name}]`;
+    async handleDragSave(changes) {
+      console.log('拖拽变更批次：', changes);
+      
+      // 取批次中的第一个项来展示提示信息
+      const first = changes[0];
+      const count = changes.length;
+      const desc = first.type === 'stage' ? `阶段 [${first.item.name}] 等${count}项` : `步骤 [${first.item.name}] 等${count}项`;
       
       const loading = this.$loading({
         lock: true,
@@ -112,8 +116,8 @@ export default {
       });
 
       try {
-        // 模拟 API 请求
-        await this.simulateApiSave(change);
+        // 模拟 API 请求（发送整个变更数组）
+        await this.simulateApiSave(changes);
         this.$message.success(`${desc}位置已实时同步到后端`);
       } catch (error) {
         this.$message.error(`${desc}同步失败，正在回滚位置...`);
