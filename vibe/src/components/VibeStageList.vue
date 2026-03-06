@@ -1,5 +1,5 @@
 <template>
-  <div class="vibe-stage-list">
+  <div :class="['vibe-stage-list', { 'vibe-dragging': isDragging }]" style="position: relative;">
     <!-- 顶部操作栏 -->
     <div class="vibe-stage-toolbar">
       <div class="left-actions">
@@ -54,30 +54,27 @@
       <div class="col-ops">操作</div>
     </div>
 
-    <!-- 列表内容 - 支持阶段拖拽 -->
-    <draggable
-      v-model="internalList"
-      handle=".drag-handle-stage"
-      animation="200"
-      ghost-class="vibe-ghost"
-      @change="onStageChange"
-    >
+    <div class="vibe-stage-list-main" ref="scrollContainer">
       <div 
-        v-for="stage in internalList" 
+        v-for="(stage, sIdx) in internalList" 
         :key="stage.id" 
         class="vibe-stage-group"
         v-show="isStageVisible(stage)"
+        :data-id="stage.id"
+        :data-type="'stage'"
       >
         <!-- 阶段行 -->
-        <div class="vibe-row vibe-stage-row">
+        <div 
+          class="vibe-row vibe-stage-row"
+          :class="{ 'is-checked': stage.checked }"
+          :data-id="stage.id"
+        >
           <div class="col-check">
             <el-checkbox 
               v-model="stage.checked" 
               @change="handleItemCheck('stage', stage)"
-              :disabled="selectionStarted && selectionType === 'step'"
             ></el-checkbox>
-            <i class="el-icon-rank drag-handle-stage"></i>
-            <!-- 展开箭头挪到这里 -->
+            <i class="el-icon-rank drag-handle-stage" @mousedown="startManualDrag($event, 'stage', stage, null, sIdx)"></i>
             <i 
               :class="stage.expanded ? 'el-icon-caret-bottom' : 'el-icon-caret-right'"
               class="expand-icon"
@@ -91,12 +88,8 @@
             :class="['col-item', col.type ? `col-${col.type}` : 'col-dynamic']"
             :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
           >
-            <template v-if="col.type === 'index'">
-              {{ stage[col.prop] }}
-            </template>
-            <template v-else>
-              {{ stage[col.prop] || '-' }}
-            </template>
+            <template v-if="col.type === 'index'">{{ stage[col.prop] }}</template>
+            <template v-else>{{ stage[col.prop] || '-' }}</template>
           </div>
 
           <div class="col-ops">
@@ -114,69 +107,60 @@
           </div>
         </div>
 
-        <!-- 步骤子列表 - 只有展开时显示 -->
+        <!-- 步骤子列表 -->
         <div v-show="stage.expanded" class="vibe-step-container">
-          <draggable
-            v-model="stage.children"
-            :group="{ name: 'steps' }"
-            handle=".drag-handle-step"
-            animation="200"
-            ghost-class="vibe-ghost"
-            @change="(evt) => onStepChange(evt, stage)"
+          <div 
+            v-for="(step, stIdx) in stage.children" 
+            :key="step.id" 
+            class="vibe-row vibe-step-row"
+            :class="{ 'is-checked': step.checked }"
+            v-show="isStepVisible(step)"
+            :data-id="step.id"
+            :data-type="'step'"
+            :data-stage-id="stage.id"
           >
-            <div 
-              v-for="step in stage.children" 
-              :key="step.id" 
-              class="vibe-row vibe-step-row"
-              v-show="isStepVisible(step)"
-            >
-              <div class="col-check">
-                <el-checkbox 
-                  v-model="step.checked" 
-                  @change="handleItemCheck('step', step)"
-                  :disabled="selectionStarted && selectionType === 'stage'"
-                ></el-checkbox>
-                <i class="el-icon-rank drag-handle-step"></i>
-                <!-- 占位符，保持对齐 -->
-                <span class="expand-placeholder"></span>
-              </div>
-
-              <div 
-                v-for="col in columns" 
-                :key="col.label"
-                :class="['col-item', col.type ? `col-${col.type}` : 'col-dynamic']"
-                :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
-              >
-                <template v-if="col.type === 'index'">
-                  <span style="font-size: 12px; color: #909399;">{{ step[col.prop] }}</span>
-                </template>
-                <template v-else>
-                  {{ step[col.prop] || '-' }}
-                </template>
-              </div>
-
-              <div class="col-ops">
-                <el-button 
-                  v-for="action in rowActions"
-                  :key="action.label"
-                  type="text" 
-                  size="small" 
-                  :class="action.class"
-                  @click="handleAction(action.command, step)"
-                >
-                  <i v-if="action.icon" :class="action.icon"></i>
-                  {{ action.label }}
-                </el-button>
-              </div>
+            <div class="col-check">
+              <el-checkbox 
+                v-model="step.checked" 
+                @change="handleItemCheck('step', step)"
+              ></el-checkbox>
+              <i class="el-icon-rank drag-handle-step" @mousedown="startManualDrag($event, 'step', step, stage, stIdx)"></i>
+              <span class="expand-placeholder"></span>
             </div>
-          </draggable>
+
+            <div 
+              v-for="col in columns" 
+              :key="col.label"
+              :class="['col-item', col.type ? `col-${col.type}` : 'col-dynamic']"
+              :style="col.width ? { width: col.width } : { flex: col.flex || 1 }"
+            >
+              <template v-if="col.type === 'index'">
+                <span style="font-size: 12px; color: #909399;">{{ step[col.prop] }}</span>
+              </template>
+              <template v-else>{{ step[col.prop] || '-' }}</template>
+            </div>
+
+            <div class="col-ops">
+              <el-button 
+                v-for="action in rowActions"
+                :key="action.label"
+                type="text" 
+                size="small" 
+                :class="action.class"
+                @click="handleAction(action.command, step)"
+              >
+                <i v-if="action.icon" :class="action.icon"></i>
+                {{ action.label }}
+              </el-button>
+            </div>
+          </div>
           <!-- 添加步骤 -->
           <div v-if="showAddStep" class="vibe-add-step">
             <el-button type="text" icon="el-icon-plus" @click="addStep(stage)">添加步骤</el-button>
           </div>
         </div>
       </div>
-    </draggable>
+    </div>
 
     <!-- 添加阶段 -->
     <div v-if="showAddStage" class="vibe-add-stage">
@@ -184,6 +168,30 @@
       <el-tooltip content="添加一个新阶段分支" placement="right">
         <i class="el-icon-info" style="color: #909399; margin-left: 5px; cursor: pointer;"></i>
       </el-tooltip>
+    </div>
+
+    <!-- 用于自定义拖拽的浮动 Ghost 和指示线 -->
+    <div v-if="isDragging" class="vibe-custom-drag-layer">
+      <!-- 1. 全宽透明遮罩行 (WPS 风格) -->
+      <div 
+        class="vibe-floating-row-ghost"
+        :style="{ 
+          top: mouseIndicatorY + 'px',
+          height: rowGhostHeight + 'px'
+        }"
+      >
+        <!-- 数量气泡已移除 -->
+      </div>
+
+      <!-- 2. 激光指示线 -->
+      <div 
+        v-if="dropLineTop !== null"
+        class="vibe-laser-indicator"
+        :style="{ top: dropLineTop + 'px' }"
+      >
+        <div class="indicator-dot"></div>
+        <div class="indicator-line"></div>
+      </div>
     </div>
 
     <!-- 复制/移动 定位弹窗 -->
@@ -304,11 +312,9 @@
 </template>
 
 <script>
-import draggable from 'vuedraggable';
-
 export default {
   name: 'VibeStageList',
-  components: { draggable },
+  components: { },
   props: {
     list: {
       type: Array,
@@ -377,7 +383,28 @@ export default {
       dialogList: [] ,// 弹窗显示的列表快照
       
       // 内部记录选择状态
-      selectionStarted: false
+      selectionStarted: false,
+      
+      // 拖拽辅助
+      isDragging: false,
+      dragType: '', // 'stage' or 'step'
+      draggingSelection: [], // 正在拖拽的多选集合
+      
+      // 激光线位置
+      dropLineTop: null,
+      targetIndex: -1,
+      targetStage: null,
+      targetNodeId: null, // 记录吸附的具体节点 ID
+      dropPosition: 'below', // 'above' or 'below'
+      
+      // 自定义鼠标拖拽状态
+      mouseX: 0,
+      mouseY: 0,
+      mouseIndicatorY: 0, // 用于行遮罩的垂直坐标
+      rowGhostHeight: 40,
+      
+      // 记录初始位置以便同级排序补偿
+      dragStartIndex: -1
     };
   },
   computed: {
@@ -638,59 +665,266 @@ export default {
       this.dialogVisible = false;
       this.dialogLoading = false;
       this.selection = [];
+      this.selectionStarted = false;
     },
-    // 阶段顺序变更
-    onStageChange(evt) {
-      if (evt.moved) {
-        this.lastDelta = {
-          type: 'stage',
-          item: evt.moved.element,
-          oldIndex: evt.moved.oldIndex,
-          newIndex: evt.moved.newIndex
-        };
-        this.$emit('drag-save', this.lastDelta);
+    // --- 自定义手动拖拽引擎 ---
+    startManualDrag(e, type, item, parent, index) {
+      if (e.button !== 0) return; // 仅左键
+      e.preventDefault();
+      
+      this.isDragging = true;
+      this.dragType = type;
+      this.targetStage = parent;
+      this.dragStartIndex = index;
+      this.draggingNode = item;
+      
+      this.mouseX = e.clientX;
+      this.mouseY = e.clientY;
+      this.targetNodeId = item.id;
+      this.dropPosition = 'above';
+      this.dropLineTop = null; // 初始不显示线，直到触发 move 中的感应函数
+      
+      if (item.checked) {
+        this.draggingSelection = this.selection.filter(it => {
+          if (type === 'stage') return it.children !== undefined;
+          return it.children === undefined;
+        });
+      } else {
+        this.draggingSelection = [item];
+      }
+
+      window.addEventListener('mousemove', this.handleManualMove);
+      window.addEventListener('mouseup', this.handleManualUp);
+      
+      const container = this.$refs.scrollContainer;
+      if (container) {
+        container.addEventListener('scroll', this.handleManualMove);
       }
     },
-    // 步骤顺序或容器变更
-    onStepChange(evt, stage) {
-      if (evt.moved) {
-        this.lastDelta = {
-          type: 'step',
-          action: 'moved',
-          item: evt.moved.element,
-          oldIndex: evt.moved.oldIndex,
-          newIndex: evt.moved.newIndex,
-          stageId: stage.id
-        };
-      } else if (evt.added) {
-        // 如果已经有 removed 信息，合并它
-        const base = (this.lastDelta && this.lastDelta.type === 'step') ? this.lastDelta : {};
-        this.lastDelta = {
-          ...base,
-          type: 'step',
-          action: base.oldStageId ? 'cross-moved' : 'added',
-          item: evt.added.element,
-          newIndex: evt.added.newIndex,
-          newStageId: stage.id
-        };
-      } else if (evt.removed) {
-        // 如果已经有 added 信息，合并它
-        const base = (this.lastDelta && this.lastDelta.type === 'step') ? this.lastDelta : {};
-        this.lastDelta = {
-          ...base,
-          type: 'step',
-          action: base.newStageId ? 'cross-moved' : 'removed',
-          oldIndex: evt.removed.oldIndex,
-          oldStageId: stage.id,
-          item: base.item || evt.removed.element
-        };
+    handleManualMove(e) {
+      if (!this.isDragging) return;
+      
+      // 如果是通过 scroll 事件触发的，e 为 Event 而非 MouseEvent
+      // 我们需要使用缓存的鼠标 clientY
+      const clientY = e.clientY !== undefined ? e.clientY : this._lastClientY;
+      const clientX = e.clientX !== undefined ? e.clientX : this._lastClientX;
+      
+      this.mouseX = clientX;
+      this.mouseY = clientY;
+      this._lastClientY = clientY;
+      this._lastClientX = clientX;
+
+      const rootRect = this.$el.getBoundingClientRect();
+      this.mouseIndicatorY = clientY - rootRect.top;
+
+      this.calculateDropPosition(clientY);
+      this.handleAutoScroll(clientY);
+    },
+    calculateDropPosition(y) {
+      const container = this.$refs.scrollContainer;
+      if (!container) return;
+      
+      const rootRect = this.$el.getBoundingClientRect();
+      let bestDist = Infinity;
+      let bestPos = { top: 0, index: 0, stage: null, nodeId: null, pos: 'above' };
+
+      // 1. 如果拖动的是阶段
+      if (this.dragType === 'stage') {
+        const groups = container.querySelectorAll('.vibe-stage-group');
+        groups.forEach(group => {
+          const rect = group.getBoundingClientRect();
+          const nodeId = group.dataset.id;
+          const mid = rect.top + rect.height / 2;
+
+          // 使用“中点判定法”：如果在组内，根据上半截或下半截决定
+          if (y >= rect.top && y <= rect.bottom) {
+            const pos = y < mid ? 'above' : 'below';
+            bestDist = 0; // 容器内强制命中
+            bestPos = { 
+              top: (pos === 'above' ? rect.top : rect.bottom) - rootRect.top, 
+              index: this.getStageIndex(group, pos),
+              nodeId, pos
+            };
+          } else {
+            // 不在组内，则寻找最近的边界
+            const dTop = Math.abs(y - rect.top);
+            if (dTop < bestDist) {
+              bestDist = dTop;
+              bestPos = { top: rect.top - rootRect.top, index: this.getStageIndex(group, 'above'), nodeId, pos: 'above' };
+            }
+            const dBottom = Math.abs(y - rect.bottom);
+            if (dBottom < bestDist) {
+              bestDist = dBottom;
+              bestPos = { top: rect.bottom - rootRect.top, index: this.getStageIndex(group, 'below'), nodeId, pos: 'below' };
+            }
+          }
+        });
+      } else {
+        // 2. 如果拖动的是步骤
+        const rows = container.querySelectorAll('.vibe-row');
+        rows.forEach(row => {
+          const rect = row.getBoundingClientRect();
+          const nodeId = row.dataset.id;
+          const mid = rect.top + rect.height / 2;
+
+          if (y >= rect.top && y <= rect.bottom) {
+            const pos = y < mid ? 'above' : 'below';
+            bestDist = 0;
+            bestPos = {
+              top: (pos === 'above' ? rect.top : rect.bottom) - rootRect.top,
+              index: this.getRowIndex(row, pos),
+              stage: this.getRowParent(row),
+              nodeId, pos
+            };
+          } else {
+            const dTop = Math.abs(y - rect.top);
+            if (dTop < bestDist) {
+              bestDist = dTop;
+              bestPos = { top: rect.top - rootRect.top, index: this.getRowIndex(row, 'above'), stage: this.getRowParent(row), nodeId, pos: 'above' };
+            }
+            const dBottom = Math.abs(y - rect.bottom);
+            if (dBottom < bestDist) {
+              bestDist = dBottom;
+              bestPos = { top: rect.bottom - rootRect.top, index: this.getRowIndex(row, 'below'), stage: this.getRowParent(row), nodeId, pos: 'below' };
+            }
+          }
+        });
+      }
+
+      if (bestDist < 50) {
+        this.dropLineTop = bestPos.top;
+        this.targetIndex = bestPos.index;
+        this.targetStage = bestPos.stage;
+        this.targetNodeId = bestPos.nodeId;
+        this.dropPosition = bestPos.pos;
+      }
+    },
+    getStageIndex(group, pos) {
+      const allGroups = Array.from(this.$refs.scrollContainer.querySelectorAll('.vibe-stage-group'));
+      const idx = allGroups.indexOf(group);
+      return pos === 'above' ? idx : idx + 1;
+    },
+    getRowIndex(row, pos) {
+      // 阶段头部行，没有具体的步骤索引
+      if (row.classList.contains('vibe-stage-row')) return -1;
+      
+      const container = row.closest('.vibe-stage-group')?.querySelector('.vibe-step-container');
+      if (!container) return -1;
+      
+      const allRows = Array.from(container.querySelectorAll('.vibe-step-row'));
+      const idx = allRows.indexOf(row);
+      return pos === 'above' ? idx : idx + 1;
+    },
+    getRowParent(row) {
+      const stageGroup = row.closest('.vibe-stage-group');
+      if (!stageGroup) return null;
+      const stageId = stageGroup.dataset.id;
+      return this.internalList.find(s => s.id == stageId);
+    },
+    handleManualUp(e) {
+      window.removeEventListener('mousemove', this.handleManualMove);
+      window.removeEventListener('mouseup', this.handleManualUp);
+      
+      const container = this.$refs.scrollContainer;
+      if (container) {
+        container.removeEventListener('scroll', this.handleManualMove);
       }
       
-      // 只有在确定是完整动作后（或者简单的 move）才派发
-      const isComplete = evt.moved || (this.lastDelta && this.lastDelta.oldStageId && this.lastDelta.newStageId);
-      if (isComplete) {
-        this.$emit('drag-save', this.lastDelta);
+      if (!this.isDragging) return;
+      
+      // 如果没有显示指示线（没触发吸附），则不执行移动，直接重置
+      if (this.dropLineTop === null) {
+        this.resetDragState();
+        return;
       }
+      
+      this.executeDrop();
+      this.resetDragState();
+    },
+    executeDrop() {
+      const type = this.dragType;
+      const selectedItems = this.draggingSelection;
+      const selectionIds = selectedItems.map(i => i.id);
+      const stage = this.targetStage;
+
+      if (type === 'stage') {
+        const originalList = [...this.internalList];
+        const targetRawIdx = originalList.findIndex(s => s.id == this.targetNodeId);
+        
+        if (targetRawIdx === -1) {
+          // 如果真的没找到目标（比如在所有项之外），默认逻辑
+          this.internalList = this.internalList.filter(item => !selectionIds.includes(item.id));
+          this.internalList.push(...selectedItems);
+          this.$emit('drag-save', { type: 'stage', item: selectedItems[0], newIndex: this.internalList.length - selectedItems.length });
+        } else {
+          this.internalList = this.internalList.filter(item => !selectionIds.includes(item.id));
+          let targetInsertionIdx = this.dropPosition === 'above' ? targetRawIdx : targetRawIdx + 1;
+          const movedBeforeTarget = originalList.slice(0, targetInsertionIdx).filter(s => selectionIds.includes(s.id)).length;
+          let finalIdx = targetInsertionIdx - movedBeforeTarget;
+
+          finalIdx = Math.max(0, Math.min(finalIdx, this.internalList.length));
+          this.internalList.splice(finalIdx, 0, ...selectedItems);
+          this.$emit('drag-save', { type: 'stage', item: selectedItems[0], newIndex: finalIdx });
+        }
+      } else {
+        if (!stage) return;
+        const fromStage = this.internalList.find(s => s.children && s.children.some(st => st.id == selectedItems[0].id));
+        const isSameStage = fromStage && fromStage.id == stage.id;
+        
+        if (!stage.children) this.$set(stage, 'children', []);
+        const originalChildren = [...stage.children];
+        const targetRawIdx = originalChildren.findIndex(st => st.id == this.targetNodeId);
+        
+        // 1. 从原阶段移除
+        if (fromStage) fromStage.children = fromStage.children.filter(st => !selectionIds.includes(st.id));
+        
+        // 3. 计算插入位置
+        let finalIdx = 0;
+        if (targetRawIdx !== -1) {
+          let targetInsertionIdx = this.dropPosition === 'above' ? targetRawIdx : targetRawIdx + 1;
+          finalIdx = targetInsertionIdx;
+          if (isSameStage) {
+            const movedBeforeTarget = originalChildren.slice(0, targetInsertionIdx).filter(st => selectionIds.includes(st.id)).length;
+            finalIdx = targetInsertionIdx - movedBeforeTarget;
+          }
+        } else {
+          // 如果目标不在 children 里，但确实有 targetNodeId
+          // 检查 targetNodeId 是否就是当前 stage 的 ID（拖到了阶段头部）
+          if (this.targetNodeId == stage.id && this.dropPosition === 'above') {
+            finalIdx = 0;
+          } else {
+            finalIdx = stage.children.length;
+          }
+        }
+
+        finalIdx = Math.max(0, Math.min(finalIdx, stage.children.length));
+        stage.children.splice(finalIdx, 0, ...selectedItems);
+        this.$emit('drag-save', { 
+          type: 'step', 
+          item: selectedItems[0], 
+          newIndex: finalIdx, 
+          stageId: stage.id,
+          oldStageId: fromStage ? fromStage.id : null
+        });
+      }
+    },
+    handleAutoScroll(y) {
+      const container = this.$refs.scrollContainer;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const edge = 50;
+      if (y < rect.top + edge) {
+        container.scrollTop -= 10;
+      } else if (y > rect.bottom - edge) {
+        container.scrollTop += 10;
+      }
+    },
+    resetDragState() {
+      this.isDragging = false;
+      this.dropLineTop = null;
+      this.draggingSelection = [];
+      this.targetIndex = -1;
+      this.targetStage = null;
     },
     // 搜索辅助逻辑
     isStageVisible(stage) {
@@ -860,9 +1094,81 @@ export default {
     border-top: 1px solid #ebeef5;
   }
 
-  .vibe-ghost {
-    opacity: 0.5;
-    background: #c8ebfb !important;
+  // 自定义拖拽图层
+  .vibe-custom-drag-layer {
+    position: absolute; // 相对于 vibe-stage-list 定位，以支持滚动区域计算
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10000;
+  }
+
+  // 全宽行遮罩 (WPS 风格)
+  .vibe-floating-row-ghost {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: rgba(64, 158, 255, 0.15) !important; // 淡蓝色全宽背景
+    border-top: 1px solid rgba(64, 158, 255, 0.3);
+    border-bottom: 1px solid rgba(64, 158, 255, 0.3);
+    z-index: 10001;
+    transform: translateY(-50%); // 居中于鼠标
+    pointer-events: none;
+  }
+
+  // 数量气泡已移除
+  
+  // 激光指示线
+  .vibe-laser-indicator {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: 9999;
+
+    .indicator-line {
+      height: 2px;
+      background: @primary-color;
+      width: 100%;
+      box-shadow: 0 0 10px rgba(64, 158, 255, 1);
+      position: absolute;
+      top: -1px;
+    }
+
+    .indicator-dot {
+      position: absolute;
+      left: 1px; 
+      top: -6.5px;
+      width: 13px;
+      height: 13px;
+      background: @primary-color;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 6px rgba(64, 158, 255, 1);
+    }
+  }
+
+  // 正在拖拽时的全局样式
+  &.vibe-dragging {
+    cursor: grabbing !important;
+    user-select: none;
+    
+    .vibe-row {
+      &.is-checked {
+        opacity: 0.4;
+        background-color: #f0f7ff !important;
+      }
+    }
+  }
+
+  .vibe-stage-list-main {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+    position: relative;
+    padding-bottom: 50px; // 给底部留出拖拽吸附空间
   }
 
   .text-danger {
