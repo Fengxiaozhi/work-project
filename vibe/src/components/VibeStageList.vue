@@ -532,7 +532,7 @@ export default {
       this.selectedNodes = selection;
       
       // 判断选中的类型
-      const hasStage = selection.some(item => item.children !== undefined);
+      const hasStage = selection.some(item => item.children && Array.isArray(item.children));
       this.selectionType = hasStage ? 'stage' : 'step';
       
       // 过滤掉当前选中的节点及其子节点，防止循环嵌套或逻辑混乱
@@ -558,7 +558,7 @@ export default {
       this.targetNode = node;
       this.targetParent = parent;
       // 默认位置模式
-      if (this.selectionType === 'step' && node.children !== undefined) {
+      if (this.selectionType === 'step' && node.children && Array.isArray(node.children)) {
         this.positionMode = 'inside';
       } else {
         this.positionMode = 'below';
@@ -686,8 +686,9 @@ export default {
       
       if (item.checked) {
         this.draggingSelection = this.selection.filter(it => {
-          if (type === 'stage') return it.children !== undefined;
-          return it.children === undefined;
+          // 健壮性判断：有子节点（数组）且不为 null 的被视为 Stage
+          const isStage = it.children && Array.isArray(it.children);
+          return type === 'stage' ? isStage : !isStage;
         });
       } else {
         this.draggingSelection = [item];
@@ -843,8 +844,12 @@ export default {
     },
     executeDrop() {
       const type = this.dragType;
-      const selectedItems = this.draggingSelection;
-      const selectionIds = selectedItems.map(i => i.id);
+      const selectedItems = this.draggingSelection || [];
+      if (selectedItems.length === 0) return;
+      
+      const selectionIds = selectedItems.filter(i => i && i.id).map(i => i.id);
+      if (selectionIds.length === 0) return;
+      
       const stage = this.targetStage;
 
       if (type === 'stage') {
@@ -876,29 +881,38 @@ export default {
           
           moves.forEach((m, i) => m.newIndex = finalIdx + i);
           this.internalList.splice(finalIdx, 0, ...selectedItems);
+          this.lastDelta = moves;
           this.$emit('drag-save', moves);
         }
       } else {
         if (!stage) return;
-        const fromStage = this.internalList.find(s => s.children && s.children.some(st => st.id == selectedItems[0].id));
+        
+        // 使用更稳健的 find 来查找来源阶段，处理 children 为 null 的情况
+        const fromStage = this.internalList.find(s => {
+          return s && s.children && Array.isArray(s.children) && 
+                 s.children.some(st => st && st.id == selectedItems[0].id);
+        });
         const isSameStage = fromStage && fromStage.id == stage.id;
         
-        const originalFromChildren = fromStage ? [...fromStage.children] : [];
-        const originalTargetChildren = [...(stage.children || [])];
-        const targetRawIdx = originalTargetChildren.findIndex(st => st.id == this.targetNodeId);
+        // 关键修复：处理非数组或 null 的 children
+        const originalFromChildren = (fromStage && Array.isArray(fromStage.children)) ? [...fromStage.children] : [];
+        const originalTargetChildren = (stage.children && Array.isArray(stage.children)) ? [...stage.children] : [];
+        const targetRawIdx = originalTargetChildren.findIndex(st => st && st.id == this.targetNodeId);
         
         // 1. 预先捕获原始索引
         const moves = selectedItems.map((item, i) => ({
           type: 'step',
           item,
-          oldIndex: fromStage ? originalFromChildren.findIndex(st => st.id == item.id) : -1,
+          oldIndex: fromStage ? originalFromChildren.findIndex(st => st && st.id == item.id) : -1,
           newIndex: -1, // 稍后更新
           oldParentId: fromStage ? fromStage.id : null,
           newParentId: stage.id
         }));
 
         // 2. 从原阶段移除
-        if (fromStage) fromStage.children = fromStage.children.filter(st => !selectionIds.includes(st.id));
+        if (fromStage && Array.isArray(fromStage.children)) {
+          fromStage.children = fromStage.children.filter(st => st && !selectionIds.includes(st.id));
+        }
         
         // 3. 计算插入位置
         let finalIdx = 0;
@@ -917,12 +931,13 @@ export default {
           }
         }
 
-        finalIdx = Math.max(0, Math.min(finalIdx, stage.children ? stage.children.length : 0));
+        finalIdx = Math.max(0, Math.min(finalIdx, (stage.children ? stage.children.length : 0)));
         
         // 4. 更新 newIndex 并插入
         moves.forEach((m, i) => m.newIndex = finalIdx + i);
         if (!stage.children) this.$set(stage, 'children', []);
         stage.children.splice(finalIdx, 0, ...selectedItems);
+        this.lastDelta = moves;
         this.$emit('drag-save', moves);
       }
     },
@@ -956,37 +971,36 @@ export default {
       if (!this.searchQuery) return true;
       return step.name && step.name.toLowerCase().includes(this.searchQuery.toLowerCase());
     },
-    // 高性能回滚：基于增量（Delta）恢复，不进行全量覆盖
+    // 高性能回滚：支持批量增量（Delta）恢复
     rollback() {
-      if (!this.lastDelta) return;
+      if (!this.lastDelta || !Array.isArray(this.lastDelta)) return;
 
-      const { type, action, oldIndex, newIndex, stageId, oldStageId, newStageId } = this.lastDelta;
+      // 逆序回滚，确保索引不会因为删除操作而错乱
+      const moves = [...this.lastDelta].reverse();
 
-      // 1. 阶段移动回滚
-      if (type === 'stage') {
-        const item = this.internalList.splice(newIndex, 1)[0];
-        this.internalList.splice(oldIndex, 0, item);
-      } 
-      // 2. 步骤移动回滚
-      else if (type === 'step') {
-        // 同阶段内移动回滚
-        if (action === 'moved') {
-          const stage = this.internalList.find(s => s.id === stageId);
-          if (stage && stage.children) {
-            const item = stage.children.splice(newIndex, 1)[0];
-            stage.children.splice(oldIndex, 0, item);
-          }
-        } 
-        // 跨阶段移动回滚
-        else {
-          const oldStage = this.internalList.find(s => s.id === oldStageId);
-          const newStage = this.internalList.find(s => s.id === newStageId);
-          if (oldStage && newStage) {
-            const item = newStage.children.splice(newIndex, 1)[0];
-            oldStage.children.splice(oldIndex, 0, item);
+      moves.forEach(move => {
+        const { type, oldIndex, newIndex, oldParentId, newParentId, item } = move;
+
+        if (type === 'stage') {
+          // 先从新位置移除
+          const currentItem = this.internalList.splice(newIndex, 1)[0];
+          // 再插回老位置
+          this.internalList.splice(oldIndex, 0, currentItem || item);
+        } else if (type === 'step') {
+          // 1. 从新阶段移除
+          const newStage = this.internalList.find(s => s.id == newParentId);
+          if (newStage && Array.isArray(newStage.children)) {
+            const currentItem = newStage.children.splice(newIndex, 1)[0];
+            
+            // 2. 插回老阶段
+            const oldStage = this.internalList.find(s => s.id == oldParentId);
+            if (oldStage) {
+              if (!oldStage.children) this.$set(oldStage, 'children', []);
+              oldStage.children.splice(oldIndex, 0, currentItem || item);
+            }
           }
         }
-      }
+      });
 
       this.lastDelta = null; // 处理完后清空
     }
