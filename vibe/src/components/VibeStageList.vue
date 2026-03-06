@@ -688,8 +688,9 @@ export default {
       // 5. 收尾
       this.dialogVisible = false;
       this.dialogLoading = false;
-      this.selection = [];
-      this.selectionStarted = false;
+      // 核心修复：不手动清空，而是重新扫描列表同步状态，确保按钮与勾选一致
+      this.updateSelection();
+      this.updateUIState();
     },
     // --- 自定义手动拖拽引擎 ---
     startManualDrag(e, type, item, parent, index) {
@@ -1024,6 +1025,8 @@ export default {
         this.lastDelta = moves;
         this.$emit('drag-save', moves);
       }
+      this.updateSelection();
+      this.updateUIState();
     },
     handleAutoScroll(y) {
       const container = this.$refs.scrollContainer;
@@ -1096,6 +1099,10 @@ export default {
       });
 
       this.lastDelta = null; // 处理完后清空
+      
+      // 核心修复：回滚后同步选中态
+      this.updateSelection();
+      this.updateUIState();
     }
   }
 };
