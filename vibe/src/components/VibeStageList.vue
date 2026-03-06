@@ -240,12 +240,11 @@
             >
               <div class="node-main">
                 <i 
-                  :class="stage.expanded ? 'el-icon-caret-bottom' : 'el-icon-caret-right'"
+                  :class="isDialogExpanded(stage) ? 'el-icon-caret-bottom' : 'el-icon-caret-right'"
                   class="expand-icon"
-                  @click.stop="stage.expanded = !stage.expanded"
+                  @click.stop="toggleDialogExpanded(stage)"
                 ></i>
-                <span class="node-text">{{ stage.no }}. {{ stage.name }}</span>
-                <span v-if="isSourceStage(stage)" class="current-hint">(当前所在)</span>
+                <span class="node-text">{{ stage.name }}</span>
               </div>
               <!-- 【核心改动】始终渲染节点控制项，但通过 CSS 控制显示隐藏。
                    这避免了鼠标滑过时频繁触发 Vue 的 v-if 销毁/创建，极大提升大数据量下的响应速度。 -->
@@ -262,7 +261,7 @@
             </div>
 
             <!-- 步骤列表 (关键优化：改 v-show 为 v-if，彻底消除弹窗打开时的 DOM 渲染压力) -->
-            <div v-if="stage.expanded && selectionType === 'step'" class="vibe-dialog-step-container">
+            <div v-if="isDialogExpanded(stage) && selectionType === 'step'" class="vibe-dialog-step-container">
               <div 
                 v-for="step in getDialogFilteredSteps(stage)" 
                 :key="step.id" 
@@ -273,7 +272,7 @@
                 @click="handleTargetNodeClick(step, stage)"
               >
                 <div class="node-main">
-                  <span class="node-text">{{ step.no }} {{ step.name }}</span>
+                  <span class="node-text">{{ step.name }}</span>
                 </div>
                 <!-- 同理：始终渲染，CSS 控制显隐 -->
                 <div class="node-control" :class="{ 'is-active': targetNode && targetNode.id === step.id }">
@@ -372,6 +371,7 @@ export default {
       selectedNodes: [], // 记录当前选中的节点对象
       displayLimit: 50, // 核心：弹窗初始只渲染 50 个阶段，解决打开卡顿
       positionMode: 'below', // 'above' or 'below'
+      dialogExpandedIds: [], // 隔离弹窗和页面的展开状态，避免同步修改
       
       // 内部记录选择状态
       selectionStarted: false,
@@ -548,6 +548,7 @@ export default {
       
       this.dialogVisible = true;
       this.displayLimit = 50; 
+      this.dialogExpandedIds = []; // 初始全部折叠
       this.dialogLoading = false;
       this.targetNode = null;
       this.positionMode = 'below';
@@ -576,10 +577,23 @@ export default {
       });
     },
     dialogToggleAll(expanded) {
-      this.displayLimit = 10000; // 点全部展开时，自动取消限制
-      this.dialogList.forEach(item => {
-        item.expanded = expanded;
-      });
+      this.displayLimit = 10000; 
+      if (expanded) {
+        this.dialogExpandedIds = this.internalList.map(s => s.id);
+      } else {
+        this.dialogExpandedIds = [];
+      }
+    },
+    isDialogExpanded(stage) {
+      return this.dialogExpandedIds.includes(stage.id);
+    },
+    toggleDialogExpanded(stage) {
+      const idx = this.dialogExpandedIds.indexOf(stage.id);
+      if (idx > -1) {
+        this.dialogExpandedIds.splice(idx, 1);
+      } else {
+        this.dialogExpandedIds.push(stage.id);
+      }
     },
     handleDialogScroll(e) {
       const { scrollTop, scrollHeight, clientHeight } = e.target;
@@ -1404,8 +1418,7 @@ export default {
       }
     }
 
-    // 悬停或选中时展示
-    &:hover:not(.is-disabled) .node-control,
+    // 仅在选中态或手动 active 时显示
     &.is-selected .node-control,
     .node-control.is-active {
       opacity: 1;
